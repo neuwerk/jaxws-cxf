@@ -1,0 +1,15 @@
+
+# Ignore all build folders at the root of each project
+/*/target/
+
+# Ignore some jazz metadata
+.jazz5/
+
+# Ignore class files (as some extra sanity) - they should never be under source control
+*.class
+
+# Ignore .DS_Store which occurs on zip extract on mac
+.DS_Store
+
+# Ignore gradle metadata
+.gradle

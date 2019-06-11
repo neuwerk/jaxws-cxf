@@ -1,14 +1,6 @@
-# Ignore build folders at the root of each project
-/*/*/build/
 
-# Ignore bin folders at the root of each project
-/*/*/bin/
-
-# Ignore generated folders at the root of each project
-/*/*/generated/
-
-# Ignore all autoFVT folders at the root of each project
-/*/*/autoFVT/
+# Ignore all mvn target directory and their contents at the root of each project
+*/target/**
 
 # Ignore some jazz metadata
 .jazz5/

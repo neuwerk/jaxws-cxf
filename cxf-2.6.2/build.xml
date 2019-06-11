@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="cxf-2.6.2" default="build" xmlns:mvn="antlib:org.apache.maven.artifact.ant">
+  <taskdef uri="antlib:org.apache.maven.artifact.ant" resource="org/apache/maven/artifact/ant/antlib.xml" 
+           classpath="../apache.aries.prereqs/maven-ant/lib/maven-ant-tasks-2.1.0.jar" />
+
+  <import file="../apache.aries.build/imports/upload.xml"/>
+  <import file="../apache.aries.build/imports/standard_tasks.xml"/>
+
+  <property name="file.local.dir" value="target"/>
+  <property name="file.to.upload" value="apache-cxf-ibm-${buildLabel}.zip"/>
+  <property name="file.label" value="${opensource.project.name} Binary"/>
+
+  <!-- Determine whether we should be using external repositories or just build against the local repo -->
+  <condition property="maven.online.mode">
+    <istrue value="${download.dependencies}" />
+  </condition>
+
+  <target name="build" depends="notifyStart, init, updateVersion, runBuild, updateRepository, package, upload, copySource, failIfFail"/>
+
+  <target name="notifyStart" if="buildResultUUID">
+    <taskdef name="startBuildActivity"
+             classname="com.ibm.team.build.ant.task.StartBuildActivityTask" />
+
+    <property name="label" value="${ant.project.name}"/>
+    <!-- MavenListener depends on the activityIdProperty being projectActivityId -->
+    <startBuildActivity buildResultUUID="${buildResultUUID}"
+                        repositoryAddress="${repositoryAddress}"
+                        userId="${userId}"
+                        passwordFile="${passwordFile}"
+                        label="${labelPrefix} ${label}"
+                        activityIdProperty="projectActivityId"
+                        parentActivityID="${masterActivityId}"
+                        autoComplete="true"/>
+  </target>
+
+  <target name="init">
+    <!-- in case it is somehow not there -->
+    <mkdir dir="${maven.repo}" />
+
+    <!-- Clean out our local maven repository since it's not in our extracted tree -->
+    <delete>
+      <fileset dir="${maven.repo}">
+        <include name="**/*" />
+      </fileset>
+    </delete>
+
+    <!-- Now copy over what we have extracted. Note we are not using that directly because
+         there have been issues with PaxURL when doing that -->
+    <move todir="${maven.repo}">
+      <fileset dir="../repository">
+        <include name="**" />
+      </fileset>
+    </move>
+  </target>
+
+  <!-- Update the checked-in repository with any new stuff in the global repo -->
+  <target name="updateRepository">
+    <move todir="../repository">
+      <fileset dir="${maven.repo}">
+        <include name="**" />
+      </fileset>
+    </move>
+
+    <!-- But make sure that we do not pick up any stuff we have just built -->
+    <delete includeemptydirs="true" failonerror="false">
+      <fileset dir="../repository/org/apache/cxf" includes="**/*-ibm*">
+        <include name="**/*-ibm*" />
+        <include name="**/maven-metadata-local.xml" />
+      </fileset>
+    </delete>
+  </target>
+
+  <target name="copySource">
+    <fileset id="shipped.jars" dir="target/lib" includes="**/*.jar" />
+    <fileset id="all.source.files" dir="." includes="**/src/main/java/**/*.java" />
+    
+    <groovy>
+      <![CDATA[
+      import java.util.zip.*
+      
+      // Step 1: find the source folders for all java source files
+      sourceFilesToSourceFolder = [:]
+      project.references.'all.source.files'.each { it->
+        def m = it.name =~ /(.*\/src\/main)\/java\/(.*)\.java/
+        if (m) {
+          sourceFilesToSourceFolder[m[0][2]] = m[0][1]
+        }
+      }
+      
+      // Step 2: Find the source folders for all the source files that 
+      // correspond to class files in the jars we include in the output zip
+      sourceFoldersToCopy = new LinkedHashSet()
+      project.references.'shipped.jars'.each { it->
+        println "Checking ${it.name}"
+        def zip = new ZipInputStream(it.getInputStream())
+      
+        // get all zip entries
+        def entries = []
+        while ((e = zip.getNextEntry()) != null) {
+          entries << e
+        }
+      
+        // filter the zip entries down to those ones corresponding to normal (no inner) classes and take their names without '.class'
+        def classFiles = entries.collect { e-> e.name }.findAll { e-> e.endsWith(".class") && !e.contains('$') }.collect { e-> e.substring(0, e.length()-6) }
+      
+        // find the source folders for those files
+        classFiles.each { c->
+          def folder = sourceFilesToSourceFolder[c]
+          if (folder != null) {
+            sourceFoldersToCopy.add(folder)
+          } else {
+            println "No folder for file: $c"
+          }
+        }
+      
+        zip.close()
+      }
+      
+      // Step 3: Copy all the source files in the source folders we found
+      println "Copying folders: $sourceFoldersToCopy"
+      
+      sourceFoldersToCopy.each { f->
+        ant.copy(todir:"../apache.aries.code.scan/src") {
+          ant.fileset(dir:f, includes:"**/*")
+        }
+      }
+      
+      ]]>
+    </groovy>
+  </target>
+
+  <property name="maven.home" value="../apache.aries.prereqs/maven/apache-maven-3.0.4"/>
+
+  <taskdef name="groovy"
+    classname="org.codehaus.groovy.ant.Groovy">
+    <classpath>
+      <pathelement path="${basedir}/../apache.aries.prereqs/groovy/lib/groovy-all.jar" />
+    </classpath>
+  </taskdef>
+
+  <!-- set the default values for these properties -->
+  <property name="version.search" value="-SNAPSHOT" />
+  <property name="version.replace.prefix" value="-ibm" />
+	
+  <!-- We won't to update the maven artifact version of everything we build -->
+  <target name="updateVersion">
+    <fileset id="pom.files" dir="." includes="**/pom.xml" excludes="maven-plugins/archetypes/cxf-jaxws-javafirst/src/main/resources/archetype-resources/pom.xml"/>
+    <groovy>
+      <![CDATA[
+      import groovy.xml.*
+      
+      // A lot of the usages of Groovy in this snippet are explained in the following topics
+      // - http://groovy.codehaus.org/The+groovy+Ant+Task
+      //   Explain how to use the ant task and shows the default variables available to the task
+      //   like project and properties (both are used below)
+      
+      // - http://groovy.codehaus.org/Reading+XML+using+Groovy's+XmlSlurper
+      // - http://groovy.codehaus.org/Updating+XML+with+XmlSlurper
+      //   Explain how to read, match and update XML with the XmlSlurper used below
+      
+      
+      // go through all pom files, not we are using the fileset 'pom.files' defined at the start of this target, 
+      // which we get out of the project and from there the set of references
+      project.references.'pom.files'.each { pomFile ->
+        println("Transforming: " + pomFile.name)
+        
+        def parser = new XmlSlurper()
+        parser.keepWhitespace = true
+        
+        def pom = parser.parse(new File(properties['basedir'], pomFile.name))
+        
+        // handle normal versions, i.e. versions that appear next to a groupId or artifactId with something project related
+        // we don't want to update snapshot version that don't belong to us
+        // Note that the =~ notation does regex matching a la does the left hand side match the regex on the right hand side
+        def nodes = pom.'**'.grep { 
+          it.version =~ '.*' + properties['version.search'] + '.*' && (it.groupId =~ '.*cxf.*' || it.artifactId =~ '.*cxf.*')
+        }
+      
+        // Note that we update it.version[0] because it.version is a node list rather a single node, but we know there is only ever one
+        nodes.each { it.version[0] = it.version[0].text().replaceAll(properties['version.search'], properties['version.replace.prefix']+'-'+properties['buildLabel']) }   
+      
+        // handle properties version specifically, these are used in samples as a way to global
+        // set which version of the projects the samples are built against (probably not applicable to CXF)
+        nodes = pom.properties.'*'.grep {
+          it.text() =~ '.*' + properties['version.search'] + '.*'
+        }
+      
+        nodes.each { 
+          pom.properties."${it.name()}"[0] = it.text().replaceAll(properties['version.search'], properties['version.replace.prefix']+'-'+properties['buildLabel']) 
+        }
+      
+        // write the result back to the file
+        def outputBuilder = new StreamingMarkupBuilder()
+        def result = outputBuilder.bind { 
+          mkp.declareNamespace("":"http://maven.apache.org/POM/4.0.0")
+          mkp.yield pom 
+        }
+        new File(properties['basedir'], pomFile.name).text = result
+      }
+      ]]>
+    </groovy>
+  </target>
+
+  <target name="runBuild">
+
+    <delete>
+      <fileset dir=".">
+        <include name="**/dependency-reduced-pom.xml"/>
+      </fileset>
+    </delete>
+
+    <mvn:mvn mavenHome="${maven.home}/" fork="true" 
+           resultproperty="maven.parent.return.code">
+      <arg value="-fae"/>
+      <arg value="-e"/>
+      <arg value="clean"/>
+      <arg value="install" />
+      <jvmarg value="-Xmx1024m"/>
+      <sysproperty key="maven.online.mode" value="${maven.online.mode}" />
+      <sysproperty key="obrRepository" value="NONE" />
+      <sysproperty key="skipTests" value="true" />
+    </mvn:mvn>
+
+    <define-if/>
+
+    <!--
+      By default maven will not refresh snapshots. Probably due to the fact that 
+      the timestamps of the newly checked out repository suggests every artifact is fresh.
+      Occasionally, we really do need to refresh snapshots in that case set the *maven.update.snapshots*
+      property.
+    -->
+    <if>
+      <istrue value="${maven.update.snapshots}" />
+      <then>
+        <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
+          <arg value="-fae" />
+          <arg value="-e" />
+          <arg value="-U" />
+          <arg value="clean" />
+          <arg value="install" />
+          <jvmarg value="-Xmx1024m" />
+          <sysproperty key="maven.repo.local" value="${maven.repo}" />
+          <sysproperty key="maven.online.mode" value="${maven.online.mode}" />
+          <sysproperty key="obrRepository" value="NONE" />
+          <sysproperty key="skipTests" value="true" />
+        </mvn:mvn>
+      </then>
+      <else>
+        <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
+          <arg value="-fae" />
+          <arg value="-e" />
+          <arg value="clean" />
+          <arg value="install" />
+          <jvmarg value="-Xmx1024m" />
+          <sysproperty key="maven.repo.local" value="${maven.repo}" />
+          <sysproperty key="maven.online.mode" value="${maven.online.mode}" />
+          <sysproperty key="obrRepository" value="NONE" />
+          <sysproperty key="skipTests" value="true" />
+        </mvn:mvn>      
+      </else>
+    </if>
+
+    <condition property="maven.build.fail">
+      <not>
+        <equals arg1="${maven.main.return.code}" arg2="0"/>
+      </not>
+    </condition>
+
+    <!-- Upload test results before announcing our failure. -->
+    <antcall target="uploadTestResults"/>
+
+  </target>
+
+  <target name="failIfFail" if="maven.build.fail">
+    <fail message="Maven build failed."/>
+  </target>
+
+  <target name="uploadTestResults" if="buildResultUUID">
+    <taskdef name="junitLogPublisher"
+            classname="com.ibm.team.build.ant.task.JUnitLogPublisherTask" />
+
+    <mkdir dir="target/testresults"/>
+    <copy todir="target/testresults" flatten="true">
+      <fileset dir=".">
+        <include name="**/target/surefire-reports/*.xml"/>
+      </fileset>
+    </copy>
+
+    <junitLogPublisher  buildresultuuid="${buildResultUUID}" filepath="target/testresults" 
+                        repositoryaddress="${repositoryAddress}" userid="${userId}" 
+                        passwordfile="${passwordFile}"/>
+
+    <property name="surefirezip" value="apache-cxf-ibm-${buildLabel}-surefirereports.zip"/>
+    <zip destfile="${file.local.dir}/${surefirezip}" whenempty="create">
+      <fileset dir=".">
+        <include name="**/surefire-reports/**"/>
+      </fileset>
+    </zip>
+
+    <antcall target="upload">
+      <param name="file.to.upload" value="${surefirezip}"/>
+      <param name="file.label" value="Surefire reports"/>
+    </antcall>
+  </target>
+
+  <target name="package">
+    <mkdir dir="target/lib"/>
+    <!-- When we pulling a new bundle we update this to get it in the new zip -->
+
+    <copy todir="target/lib" flatten="true">
+      <fileset dir=".">
+        <include name="svn-base-revision.txt"/>
+        
+        <!-- the jars we ship -->
+        <include name="**/target/*${buildLabel}.jar"/>
+      	<type type="file"/>
+      </fileset>
+    </copy>
+
+    <zip destfile="${file.local.dir}/${file.to.upload}">
+      <fileset dir="target/lib">
+        <include name="*.jar"/>
+        <include name="svn-base-revision.txt"/>
+      </fileset>
+    </zip>
+  </target>
+
+  <target name="failIfMavenBuildFailed" if="maven.build.fail">
+    <fail message="Maven build failed, check maven build results to see why"/>
+  </target>
+</project>
