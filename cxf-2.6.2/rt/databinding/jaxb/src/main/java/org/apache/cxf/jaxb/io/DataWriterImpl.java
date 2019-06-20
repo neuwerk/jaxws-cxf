@@ -49,7 +49,7 @@ import org.apache.ws.commons.schema.XmlSchemaElement;
 public class DataWriterImpl<T> extends JAXBDataBase implements DataWriter<T> {
     private static final Logger LOG = LogUtils.getLogger(JAXBDataBinding.class);
 
-    private JAXBDataBinding databinding;
+    private final JAXBDataBinding databinding;
     
     public DataWriterImpl(JAXBDataBinding binding) {
         super(binding.getContext());
@@ -98,26 +98,32 @@ public class DataWriterImpl<T> extends JAXBDataBase implements DataWriter<T> {
         Marshaller marshaller;
         try {
             
-            marshaller = context.createMarshaller();
-            marshaller.setProperty(Marshaller.JAXB_ENCODING, "UTF-8");
-            marshaller.setProperty(Marshaller.JAXB_FRAGMENT, true);
-            marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.FALSE);
-            marshaller.setListener(databinding.getMarshallerListener());
-            if (databinding.getValidationEventHandler() != null) {
-                marshaller.setEventHandler(databinding.getValidationEventHandler());
-            }
-            
-            final Map<String, String> nspref = databinding.getDeclaredNamespaceMappings();
-            if (nspref != null) {
-                JAXBUtils.setNamespaceWrapper(nspref, marshaller);
-            }
-            if (databinding.getMarshallerProperties() != null) {
-                for (Map.Entry<String, Object> propEntry 
-                    : databinding.getMarshallerProperties().entrySet()) {
-                    try {
-                        marshaller.setProperty(propEntry.getKey(), propEntry.getValue());
-                    } catch (PropertyException pe) {
-                        LOG.log(Level.INFO, "PropertyException setting Marshaller properties", pe);
+            marshaller = databinding.getJAXBMarshaller();
+
+            //If the marshaller has already been filled with all the initializing properties
+            //and attributes, we don't have to set again.
+            if (Boolean.FALSE.equals(marshaller.getProperty(Marshaller.JAXB_FRAGMENT))
+                && marshaller.getAttachmentMarshaller() == null) {
+                marshaller.setProperty(Marshaller.JAXB_ENCODING, "UTF-8");
+                marshaller.setProperty(Marshaller.JAXB_FRAGMENT, Boolean.TRUE);
+                marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.FALSE);
+
+                marshaller.setListener(databinding.getMarshallerListener());
+                if (databinding.getValidationEventHandler() != null) {
+                    marshaller.setEventHandler(databinding.getValidationEventHandler());
+                }
+
+                final Map<String, String> nspref = databinding.getDeclaredNamespaceMappings();
+                if (nspref != null) {
+                    JAXBUtils.setNamespaceWrapper(nspref, marshaller);
+                }
+                if (databinding.getMarshallerProperties() != null) {
+                    for (Map.Entry<String, Object> propEntry : databinding.getMarshallerProperties().entrySet()) {
+                        try {
+                            marshaller.setProperty(propEntry.getKey(), propEntry.getValue());
+                        } catch (PropertyException pe) {
+                            LOG.log(Level.INFO, "PropertyException setting Marshaller properties", pe);
+                        }
                     }
                 }
             }
@@ -150,7 +156,8 @@ public class DataWriterImpl<T> extends JAXBDataBase implements DataWriter<T> {
         if (part != null && !part.isElement() && part.getTypeClass() != null) {
             honorJaxbAnnotation = true;
         }
-        
+
+        Marshaller marshaller = null;
         if (obj != null
             || !(part.getXmlSchema() instanceof XmlSchemaElement)) {
             
@@ -158,14 +165,16 @@ public class DataWriterImpl<T> extends JAXBDataBase implements DataWriter<T> {
                 && part != null
                 && Boolean.TRUE.equals(part.getProperty(JAXBDataBinding.class.getName() 
                                                         + ".CUSTOM_EXCEPTION"))) {
-                JAXBEncoderDecoder.marshallException(createMarshaller(obj, part),
-                                                     (Exception)obj,
-                                                     part, 
-                                                     output);                
+                marshaller = createMarshaller(obj, part);
+                JAXBEncoderDecoder.marshallException(marshaller,
+                                                     (Exception) obj,
+                                                     part,
+                                                     output);               
             } else {
                 Annotation[] anns = getJAXBAnnotation(part);
                 if (!honorJaxbAnnotation || anns.length == 0) {
-                    JAXBEncoderDecoder.marshall(createMarshaller(obj, part), obj, part, output);
+                    marshaller = createMarshaller(obj, part);
+                    JAXBEncoderDecoder.marshall(marshaller, obj, part, output);
                 } else if (honorJaxbAnnotation && anns.length > 0) {
                     //RpcLit will use the JAXB Bridge to marshall part message when it is 
                     //annotated with @XmlList,@XmlAttachmentRef,@XmlJavaTypeAdapter
@@ -181,9 +190,10 @@ public class DataWriterImpl<T> extends JAXBDataBase implements DataWriter<T> {
                 }
             }
         } else if (needToRender(obj, part)) {
-            JAXBEncoderDecoder.marshallNullElement(createMarshaller(obj, part),
-                                                   output, part);
+            marshaller = createMarshaller(obj, part);
+            JAXBEncoderDecoder.marshallNullElement(marshaller, output, part);
         }
+        databinding.releaseJAXBMarshaller(marshaller);
     }
 
     private boolean needToRender(Object obj, MessagePartInfo part) {

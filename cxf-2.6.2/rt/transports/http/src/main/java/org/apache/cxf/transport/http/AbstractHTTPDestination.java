@@ -50,6 +50,7 @@ import org.apache.cxf.configuration.security.AuthorizationPolicy;
 import org.apache.cxf.continuations.ContinuationProvider;
 import org.apache.cxf.continuations.SuspendedInvocationException;
 import org.apache.cxf.helpers.HttpHeaderHelper;
+import org.apache.cxf.helpers.IOUtils;
 import org.apache.cxf.interceptor.Fault;
 import org.apache.cxf.interceptor.Interceptor;
 import org.apache.cxf.io.AbstractWrappedOutputStream;
@@ -480,21 +481,33 @@ public abstract class AbstractHTTPDestination
         if (inMessage == null) {
             return;
         }
-        Collection<Attachment> atts = inMessage.getAttachments();
-        if (atts != null) {
-            for (Attachment a : atts) {
-                if (a.getDataHandler().getDataSource() instanceof AttachmentDataSource) {
-                    try {
-                        ((AttachmentDataSource)a.getDataHandler().getDataSource()).cache(inMessage);
-                    } catch (IOException e) {
-                        throw new Fault(e);
+        Object o = inMessage.get("cxf.io.cacheinput");
+        DelegatingInputStream in = inMessage.getContent(DelegatingInputStream.class);
+        if (MessageUtils.isTrue(o)) {
+            Collection<Attachment> atts = inMessage.getAttachments();
+            if (atts != null) {
+                for (Attachment a : atts) {
+                    if (a.getDataHandler().getDataSource() instanceof AttachmentDataSource) {
+                        try {
+                            ((AttachmentDataSource)a.getDataHandler().getDataSource()).cache(inMessage);
+                        } catch (IOException e) {
+                            throw new Fault(e);
+                        }
                     }
                 }
             }
-        }
-        DelegatingInputStream in = inMessage.getContent(DelegatingInputStream.class);
-        if (in != null) {
-            in.cacheInput();
+            if (in != null) {
+                in.cacheInput();
+            }
+        } else if (in != null) {
+            //We don't need to cache it, but we may need to consume it in order for the client 
+            // to be able to receive a response. (could be blocked sending)
+            //However, also don't want to consume indefinitely.   We'll limit to 16M.
+            try {
+                IOUtils.consume(in, 16 * 1024 * 1024);
+            } catch (IOException ioe) {
+                //ignore
+            }
         }
     }
     

@@ -25,7 +25,10 @@ import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.net.URL;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Stack;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -45,6 +48,7 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.XMLStreamWriter;
 import javax.xml.stream.events.Attribute;
+import javax.xml.stream.events.Characters;
 import javax.xml.stream.events.DTD;
 import javax.xml.stream.events.Namespace;
 import javax.xml.stream.events.StartDocument;
@@ -70,7 +74,6 @@ import org.w3c.dom.Node;
 import org.w3c.dom.ProcessingInstruction;
 import org.w3c.dom.Text;
 import org.w3c.dom.UserDataHandler;
-
 import org.xml.sax.InputSource;
 import org.xml.sax.XMLReader;
 
@@ -140,16 +143,23 @@ public final class StaxUtils {
             innerElementCountThreshold = -1;
         }
         XMLInputFactory xif = createXMLInputFactory(true);
-        if (!xif.getClass().getName().contains("ctc.wstx")) {
-            xif = null;
+        String xifClassName = xif.getClass().getName();
+        if (xifClassName.contains("ctc.wstx") || xifClassName.contains("xml.xlxp")
+                || xifClassName.contains("xml.xlxp2") || xifClassName.contains("bea.core")) {
+            SAFE_INPUT_FACTORY = xif;
+        } else {
+            SAFE_INPUT_FACTORY = null;
         }
-        SAFE_INPUT_FACTORY = xif;
         
         XMLOutputFactory xof = XMLOutputFactory.newInstance();
-        if (!xof.getClass().getName().contains("ctc.wstx")) {
-            xof = null;
+        String xofClassName = xof.getClass().getName();
+        if (xofClassName.contains("ctc.wstx") || xofClassName.contains("xml.xlxp")
+                || xofClassName.contains("xml.xlxp2") || xofClassName.contains("bea.core")) {
+            SAFE_OUTPUT_FACTORY = xof;
+        } else {
+            SAFE_OUTPUT_FACTORY = null;
         }
-        SAFE_OUTPUT_FACTORY = xof;
+        
     }
     
     private StaxUtils() {
@@ -449,6 +459,7 @@ public final class StaxUtils {
             } catch (XMLStreamException ex) {
                 //ignore
             }
+            StaxUtils.close(writer);
         }
     }
     public static void copy(Source source, XMLStreamWriter writer) throws XMLStreamException {
@@ -780,10 +791,8 @@ public final class StaxUtils {
         } else {
             writer.writeStartElement(prefix, localName, ns);
         }
-
-        NamedNodeMap attrs = e.getAttributes();
-        for (int i = 0; i < attrs.getLength(); i++) {
-            Node attr = attrs.item(i);
+        
+        for (Node attr : sortElementAttributes(e.getAttributes())) {          
 
             String name = attr.getLocalName();
             String attrPrefix = attr.getPrefix();
@@ -818,7 +827,7 @@ public final class StaxUtils {
                     } else if (attrPrefix.length() == 0) {
                         writer.writeAttribute(attns, name, value);
                     } else {
-                        if (repairing && DOMUtils.getNamespace(e, attrPrefix) == null) {
+                        if (repairing && writer.getNamespaceContext().getNamespaceURI(attrPrefix) == null) {
                             writer.writeNamespace(attrPrefix, attns);
                         }
                         writer.writeAttribute(attrPrefix, attns, name, value);
@@ -846,6 +855,27 @@ public final class StaxUtils {
         if (endElement) {
             writer.writeEndElement();
         }
+    }
+
+    private static List<Node> sortElementAttributes(NamedNodeMap attrs) {
+        if (attrs.getLength() == 0) {
+            return Collections.<Node> emptyList();
+        }
+        List<Node> sortedAttrs = new LinkedList<Node>();
+        for (int i = 0; i < attrs.getLength(); i++) {
+            Node attr = attrs.item(i);
+            String name = attr.getLocalName();          
+            if (name == null) {
+                name = attr.getNodeName();
+            }
+            if ("xmlns".equals(attr.getPrefix()) || "xmlns".equals(name)) {
+                sortedAttrs.add(0, attr);
+            } else {
+                sortedAttrs.add(attr);
+            }
+        }
+
+        return sortedAttrs;
     }
 
     public static void writeNode(Node n, XMLStreamWriter writer, boolean repairing) 
@@ -1129,43 +1159,242 @@ public final class StaxUtils {
             }
         }
     }
-    private static boolean addLocation(Document doc, Node node, 
-                                    XMLStreamReader reader,
-                                    boolean recordLoc) {
-        if (recordLoc) {
-            Location loc = reader.getLocation();
-            if (loc != null && (loc.getColumnNumber() != 0 || loc.getLineNumber() != 0)) {
-                try {
-                    final int charOffset = loc.getCharacterOffset();
-                    final int colNum = loc.getColumnNumber();
-                    final int linNum = loc.getLineNumber();
-                    final String pubId = loc.getPublicId() == null ? doc.getDocumentURI() : loc.getPublicId();
-                    final String sysId = loc.getSystemId() == null ? doc.getDocumentURI() : loc.getSystemId();
-                    Location loc2 = new Location() {
-                        public int getCharacterOffset() {
-                            return charOffset;
-                        }
-                        public int getColumnNumber() {
-                            return colNum;
-                        }
-                        public int getLineNumber() {
-                            return linNum;
-                        }
-                        public String getPublicId() {
-                            return pubId;
-                        }
-                        public String getSystemId() {
-                            return sysId;
-                        }
-                    };
-                    node.setUserData("location", loc2, LocationUserDataHandler.INSTANCE);
-                } catch (Exception ex) {
-                    //possibly not DOM level 3, won't be able to record this then
-                    return false;
+    
+    public static void readDocElements(Document doc, Node parent, XMLStreamReader reader, StreamToDOMContext context)
+        throws XMLStreamException {
+        int event = reader.getEventType();
+        while (reader.hasNext()) {
+            switch (event) {
+            case XMLStreamConstants.START_ELEMENT: {
+                context.incrementCount();
+                Element e;
+                if (!StringUtils.isEmpty(reader.getPrefix())) {
+                    e = doc.createElementNS(reader.getNamespaceURI(), 
+                                            reader.getPrefix() + ":" + reader.getLocalName());
+                } else {
+                    e = doc.createElementNS(reader.getNamespaceURI(), reader.getLocalName());
                 }
+                e = (Element)parent.appendChild(e);
+                if (context.isRecordLoc()) {
+                    context.setRecordLoc(addLocation(doc, e, reader.getLocation(), context.isRecordLoc()));
+                }
+
+                for (int ns = 0; ns < reader.getNamespaceCount(); ns++) {
+                    String uri = reader.getNamespaceURI(ns);
+                    String prefix = reader.getNamespacePrefix(ns);
+
+                    declare(e, uri, prefix);
+                }
+
+                for (int att = 0; att < reader.getAttributeCount(); att++) {
+                    String name = reader.getAttributeLocalName(att);
+                    String prefix = reader.getAttributePrefix(att);
+                    if (prefix != null && prefix.length() > 0) {
+                        name = prefix + ":" + name;
+                    }
+
+                    Attr attr = doc.createAttributeNS(reader.getAttributeNamespace(att), name);
+                    attr.setValue(reader.getAttributeValue(att));
+                    e.setAttributeNode(attr);
+                }
+
+                if (context.isRepairing() && !isDeclared(e, reader.getNamespaceURI(), reader.getPrefix())) {
+                    declare(e, reader.getNamespaceURI(), reader.getPrefix());
+                }
+                context.pushToStack(parent);
+                if (context.isThreshold() && innerElementLevelThreshold != -1 
+                    && context.getStackSize() >= innerElementLevelThreshold) {
+                    throw new DepthExceededStaxException("reach the innerElementLevelThreshold:" 
+                                               + innerElementLevelThreshold);
+                }
+                if (context.isThreshold() && innerElementCountThreshold != -1 
+                    && context.getCount() >= innerElementCountThreshold) {
+                    throw new DepthExceededStaxException("reach the innerElementCountThreshold:" 
+                                               + innerElementCountThreshold);
+                }
+                parent = e;
+                break;
+            }
+            case XMLStreamConstants.END_ELEMENT:
+                if (context.isStackEmpty()) {
+                    return;
+                }
+                parent = context.popFromStack();
+                if (parent instanceof Document) {
+                    return;
+                }
+                break;
+            case XMLStreamConstants.NAMESPACE:
+                break;
+            case XMLStreamConstants.ATTRIBUTE:
+                break;
+            case XMLStreamConstants.CHARACTERS:
+                if (parent != null) {
+                    context.setRecordLoc(addLocation(doc, 
+                                                     parent.appendChild(doc.createTextNode(reader.getText())),
+                                                     reader.getLocation(), context.isRecordLoc()));
+                }
+                break;
+            case XMLStreamConstants.COMMENT:
+                if (parent != null) {
+                    parent.appendChild(doc.createComment(reader.getText()));
+                }
+                break;
+            case XMLStreamConstants.CDATA:
+                context.setRecordLoc(addLocation(doc, 
+                                        parent.appendChild(doc.createCDATASection(reader.getText())),
+                                        reader.getLocation(), context.isRecordLoc()));
+                break;
+            case XMLStreamConstants.PROCESSING_INSTRUCTION:
+                parent.appendChild(doc.createProcessingInstruction(reader.getPITarget(), reader.getPIData()));
+                break;
+            case XMLStreamConstants.ENTITY_REFERENCE:
+                parent.appendChild(doc.createProcessingInstruction(reader.getPITarget(), reader.getPIData()));
+                break;
+            default:
+                break;
+            }
+
+            if (reader.hasNext()) {
+                event = reader.next();
+            }
+        }
+    }
+    
+    public static Node readDocElement(Document doc, Node parent, XMLEvent ev, StreamToDOMContext context)
+        throws XMLStreamException {
+        switch (ev.getEventType()) {
+        case XMLStreamConstants.START_ELEMENT: {
+            context.incrementCount();
+            Element e;
+            StartElement startElem = ev.asStartElement();
+            QName name = startElem.getName();
+            if (!StringUtils.isEmpty(name.getPrefix())) {
+                e = doc.createElementNS(name.getNamespaceURI(), 
+                                        name.getPrefix() + ":" + name.getLocalPart());
+            } else {
+                e = doc.createElementNS(name.getNamespaceURI(), name.getLocalPart());
+            }
+            e = (Element)parent.appendChild(e);
+            if (context.isRecordLoc()) {
+                context.setRecordLoc(addLocation(doc, e, startElem.getLocation(), context.isRecordLoc()));
+            }
+
+            if (context.isRepairing() && !isDeclared(e, name.getNamespaceURI(), name.getPrefix())) {
+                declare(e, name.getNamespaceURI(), name.getPrefix());
+            }
+            context.pushToStack(parent);
+            if (context.isThreshold() && innerElementLevelThreshold != -1 
+                && context.getStackSize() >= innerElementLevelThreshold) {
+                throw new DepthExceededStaxException("reach the innerElementLevelThreshold:" 
+                                           + innerElementLevelThreshold);
+            }
+            if (context.isThreshold() && innerElementCountThreshold != -1 
+                && context.getCount() >= innerElementCountThreshold) {
+                throw new DepthExceededStaxException("reach the innerElementCountThreshold:" 
+                                           + innerElementCountThreshold);
+            }
+            parent = e;
+            break;
+        }
+        case XMLStreamConstants.END_ELEMENT:
+            if (context.isStackEmpty()) {
+                return parent;
+            }
+            parent = context.popFromStack();
+            if (parent instanceof Document) {
+                return parent;
+            }
+            break;
+        case XMLStreamConstants.NAMESPACE:
+            Namespace ns = (Namespace)ev;
+            declare((Element)parent, ns.getNamespaceURI(), ns.getPrefix());
+            break;
+        case XMLStreamConstants.ATTRIBUTE:
+            Attribute at = (Attribute)ev;
+            QName qname = at.getName();
+            String attName = qname.getLocalPart();
+            String attPrefix = qname.getPrefix();
+            if (attPrefix != null && attPrefix.length() > 0) {
+                attName = attPrefix + ":" + attName;
+            }
+            Attr attr = doc.createAttributeNS(qname.getNamespaceURI(), attName);
+            attr.setValue(at.getValue());
+            ((Element)parent).setAttributeNode(attr);
+            break;
+        case XMLStreamConstants.CHARACTERS:
+            if (parent != null) {
+                Characters characters = ev.asCharacters();
+                context.setRecordLoc(addLocation(doc, 
+                                                 parent.appendChild(doc.createTextNode(characters.getData())),
+                                                 characters.getLocation(), context.isRecordLoc()));
+            }
+            break;
+        case XMLStreamConstants.COMMENT:
+            if (parent != null) {
+                parent.appendChild(doc.createComment(((javax.xml.stream.events.Comment)ev).getText()));
+            }
+            break;
+        case XMLStreamConstants.CDATA:
+            Characters characters = ev.asCharacters();
+            context.setRecordLoc(addLocation(doc, 
+                                             parent.appendChild(doc.createCDATASection(characters.getData())),
+                                             characters.getLocation(), context.isRecordLoc()));
+            break;
+        case XMLStreamConstants.PROCESSING_INSTRUCTION:
+            parent.appendChild(doc.createProcessingInstruction(((ProcessingInstruction)ev).getTarget(),
+                                                               ((ProcessingInstruction)ev).getData()));
+            break;
+        case XMLStreamConstants.ENTITY_REFERENCE:
+            javax.xml.stream.events.EntityReference er = (javax.xml.stream.events.EntityReference)ev;
+            parent.appendChild(doc.createEntityReference(er.getName()));
+            break;
+        default:
+            break;
+        }
+        return parent;
+    }
+    
+    private static boolean addLocation(Document doc, Node node, 
+                                       Location loc,
+                                       boolean recordLoc) {
+        if (recordLoc && loc != null && (loc.getColumnNumber() != 0 || loc.getLineNumber() != 0)) {
+            try {
+                final int charOffset = loc.getCharacterOffset();
+                final int colNum = loc.getColumnNumber();
+                final int linNum = loc.getLineNumber();
+                final String pubId = loc.getPublicId() == null ? doc.getDocumentURI() : loc.getPublicId();
+                final String sysId = loc.getSystemId() == null ? doc.getDocumentURI() : loc.getSystemId();
+                Location loc2 = new Location() {
+                    public int getCharacterOffset() {
+                        return charOffset;
+                    }
+                    public int getColumnNumber() {
+                        return colNum;
+                    }
+                    public int getLineNumber() {
+                        return linNum;
+                    }
+                    public String getPublicId() {
+                        return pubId;
+                    }
+                    public String getSystemId() {
+                        return sysId;
+                    }
+                };
+                node.setUserData("location", loc2, LocationUserDataHandler.INSTANCE);
+            } catch (Throwable ex) {
+                //possibly not DOM level 3, won't be able to record this then
+                return false;
             }
         }
         return recordLoc;
+    }
+    
+    private static boolean addLocation(Document doc, Node node, 
+            XMLStreamReader reader,
+            boolean recordLoc) {
+        return addLocation(doc, node, reader.getLocation(), recordLoc);
     }
     
     private static class LocationUserDataHandler implements UserDataHandler {
@@ -1548,17 +1777,106 @@ public final class StaxUtils {
 
     public static String toString(Document doc) throws XMLStreamException {
         StringWriter sw = new StringWriter(1024);
-        XMLStreamWriter writer = createXMLStreamWriter(sw);
-        copy(doc, writer);
-        writer.flush();
+        XMLStreamWriter writer = null;
+        try {
+            writer = createXMLStreamWriter(sw);
+            copy(doc, writer);
+            writer.flush();
+        } finally {
+            StaxUtils.close(writer);
+        }
         return sw.toString();
     }
     public static String toString(Element el) throws XMLStreamException {
         StringWriter sw = new StringWriter(1024);
-        XMLStreamWriter writer = createXMLStreamWriter(sw);
-        copy(el, writer);
-        writer.flush();
+        XMLStreamWriter writer = null;
+        try {
+            writer = createXMLStreamWriter(sw);
+            copy(el, writer);
+            writer.flush();
+        } finally {
+            StaxUtils.close(writer);
+        }        
         return sw.toString();
+    }
+
+
+    public static void close(XMLStreamReader reader) {
+        if (reader != null) {
+            try {
+                reader.close();
+            } catch (Exception e) {
+                //ignore
+            }
+        }
+    }
+    
+    public static void close(XMLStreamWriter writer) {
+        if (writer != null) {
+            try {
+                writer.close();
+            } catch (Exception e) {
+                //ignore
+            }
+        }
+    }
+    
+    public static class StreamToDOMContext {
+        private Stack<Node> stack = new Stack<Node>();
+        private int elementCount;
+        private boolean repairing;
+        private boolean recordLoc;
+        private boolean threshold;
+        
+        public StreamToDOMContext(boolean repairing, boolean recordLoc, boolean threshold) {
+            this.repairing = repairing;
+            this.recordLoc = recordLoc;
+            this.threshold = threshold;
+        }
+        
+        public void setRecordLoc(boolean recordLoc) {
+            this.recordLoc = recordLoc;
+        }
+        
+        public boolean isRecordLoc() {
+            return this.recordLoc;
+        }
+        
+        public boolean isRepairing() {
+            return this.repairing;
+        }
+
+        public boolean isThreshold() {
+            return this.threshold;
+        }
+        
+        public int incrementCount() {
+            return ++elementCount;
+        }
+        
+        public int decreaseCount() {
+            return --elementCount;
+        }
+        
+        public int getCount() {
+            return elementCount;
+        }
+        
+        public Node pushToStack(Node node) {
+            return stack.push(node);
+        }
+        
+        public Node popFromStack() {
+            return stack.pop();
+        }
+        
+        public int getStackSize() {
+            return stack.size();
+        }
+        
+        public boolean isStackEmpty() {
+            return stack.isEmpty();
+        }
     }
 
 }

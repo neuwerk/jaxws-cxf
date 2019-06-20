@@ -339,17 +339,12 @@ public class PhaseInterceptorChain implements InterceptorChain {
         FaultMode mode = message.get(FaultMode.class);
         if (mode == FaultMode.CHECKED_APPLICATION_FAULT) {
             if (isFineLogging) {
-                LogUtils.log(LOG, Level.FINE,
-                             "Application " + description
-                             + "has thrown exception, unwinding now", ex);
-            } else if (LOG.isLoggable(Level.INFO)) {
+                //RTC185163, log the application error only when the log level is FINE
                 Throwable t = ex;
-                if (ex instanceof Fault
-                    && ex.getCause() != null) {
+                if (ex instanceof Fault && ex.getCause() != null) {
                     t = ex.getCause();
                 }
-
-                LogUtils.log(LOG, Level.INFO,
+                LogUtils.log(LOG, Level.FINE,
                              "Application " + description
                              + "has thrown exception, unwinding now: "
                              + t.getClass().getName()

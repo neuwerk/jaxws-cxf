@@ -29,10 +29,17 @@ import javax.xml.stream.XMLStreamWriter;
 import javax.xml.transform.Source;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.validation.Schema;
+import javax.xml.validation.Validator;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.DocumentFragment;
 import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXParseException;
+
 
 import org.apache.cxf.common.i18n.Message;
 import org.apache.cxf.common.logging.LogUtils;
@@ -44,8 +51,16 @@ import org.apache.cxf.staxutils.StaxUtils;
 import org.apache.cxf.staxutils.W3CDOMStreamWriter;
 
 public class XMLStreamDataWriter implements DataWriter<XMLStreamWriter> {
+    
     private static final Logger LOG = LogUtils.getL7dLogger(XMLStreamDataWriter.class);
 
+   
+    private Schema schema;
+
+    public XMLStreamDataWriter() {
+        
+    }
+    
     public void write(Object obj, MessagePartInfo part, XMLStreamWriter output) {
         write(obj, output);
     }
@@ -55,14 +70,40 @@ public class XMLStreamDataWriter implements DataWriter<XMLStreamWriter> {
             XMLStreamReader reader = null;
             if (obj instanceof DataSource) {
                 DataSource ds = (DataSource)obj;
-                reader = StaxUtils.createXMLStreamReader(ds.getInputStream());
-                StaxUtils.copy(reader, writer);
-                reader.close();
+                if (schema != null) {
+                    DOMSource domSource = new DOMSource(StaxUtils.read(ds.getInputStream()));
+                    Validator schemaValidator = schema.newValidator();
+                    schemaValidator.setErrorHandler(
+                        new MtomValidationErrorHandler(schemaValidator.getErrorHandler(), domSource.getNode()));
+                    schemaValidator.validate(domSource);
+                    StaxUtils.copy(domSource, writer);
+                } else {
+                    reader = StaxUtils.createXMLStreamReader(ds.getInputStream());
+                    StaxUtils.copy(reader, writer);
+                    reader.close();
+                }
+
             } else if (obj instanceof Node) {
+                if (schema != null) {
+                    Validator schemaValidator = schema.newValidator();
+                    schemaValidator.setErrorHandler(
+                        new MtomValidationErrorHandler(schemaValidator.getErrorHandler(), (Node)obj));
+                    schemaValidator.validate(new DOMSource((Node)obj));
+                }
                 Node nd = (Node)obj;
                 writeNode(nd, writer);
             } else {
                 Source s = (Source) obj;
+                if (schema != null) {
+                    if (!(s instanceof DOMSource)) {
+                        //make the source re-readable.
+                        s = new DOMSource(StaxUtils.read(s));
+                    }
+                    Validator schemaValidator = schema.newValidator();
+                    schemaValidator.setErrorHandler(
+                        new MtomValidationErrorHandler(schemaValidator.getErrorHandler(), ((DOMSource)s).getNode()));
+                    schemaValidator.validate(s);
+                }
                 if (s instanceof DOMSource
                     && ((DOMSource) s).getNode() == null) {
                     return;
@@ -74,20 +115,23 @@ public class XMLStreamDataWriter implements DataWriter<XMLStreamWriter> {
                             e.getClass().getCanonicalName(), e.getMessage());
         } catch (IOException e) {
             throw new Fault(new Message("COULD_NOT_WRITE_XML_STREAM", LOG), e);
+        } catch (SAXException e) {
+            throw new Fault("COULD_NOT_WRITE_XML_STREAM_CAUSED_BY", LOG, e,
+                            e.getClass().getCanonicalName(), e.getMessage());
         }
     }
 
     private void writeNode(Node nd, XMLStreamWriter writer) throws XMLStreamException {
         if (writer instanceof W3CDOMStreamWriter) {
             W3CDOMStreamWriter dw = (W3CDOMStreamWriter)writer;
-            
+
             if (dw.getCurrentNode() != null) {
                 if (nd instanceof DocumentFragment
                     && nd.getOwnerDocument() == dw.getCurrentNode().getOwnerDocument()) {
                     Node ch = nd.getFirstChild();
                     while (ch != null) {
                         nd.removeChild(ch);
-                        dw.getCurrentNode().appendChild(ch);
+                        dw.getCurrentNode().appendChild(org.apache.cxf.helpers.DOMUtils.getDomElement(ch));
                         ch = nd.getFirstChild();
                     }
                 } else if (nd.getOwnerDocument() == dw.getCurrentNode().getOwnerDocument()) {
@@ -113,19 +157,105 @@ public class XMLStreamDataWriter implements DataWriter<XMLStreamWriter> {
             StaxUtils.writeDocument((Document)nd,
                                     writer, false, true);
         } else {
-            StaxUtils.writeNode(nd, writer, true);                    
+            StaxUtils.writeNode(nd, writer, true);
         }
 
     }
 
     public void setSchema(Schema s) {
+        this.schema = s;
     }
 
     public void setAttachments(Collection<Attachment> attachments) {
 
-    }   
+    }
 
     public void setProperty(String key, Object value) {
     }
     
+    private static class MtomValidationErrorHandler implements ErrorHandler {
+        private ErrorHandler origErrorHandler;
+        private Node node;
+        
+        MtomValidationErrorHandler(ErrorHandler origErrorHandler, Node node) {
+            this.origErrorHandler = origErrorHandler;
+            this.node = node;
+        }
+        
+        
+        @Override
+        public void warning(SAXParseException exception) throws SAXException {
+            
+            if (this.origErrorHandler != null) {
+                this.origErrorHandler.warning(exception);
+            } else {
+                // do nothing
+            }
+        }
+
+        @Override
+        public void error(SAXParseException exception) throws SAXException {
+            if (this.isCVC312Exception(exception)) {
+                String elementName = this.getAttachmentElementName(exception);
+                if (node != null && this.findIncludeNode(node, elementName)) {
+                    return;
+                }
+            }
+            
+            if (this.origErrorHandler != null) {
+                this.origErrorHandler.error(exception);
+            } else {
+                throw exception;
+            }
+            
+        }
+
+        @Override
+        public void fatalError(SAXParseException exception) throws SAXException {
+            if (this.origErrorHandler != null) {
+                this.origErrorHandler.fatalError(exception);
+            } else {
+                throw exception;
+            }
+            
+        }
+        
+        private boolean isCVC312Exception(SAXParseException exception) {
+            String msg = exception.getMessage();
+            return (msg.startsWith("cvc-type.3.1.2") || msg.startsWith("cvc-complex-type.2.2"))
+                && msg.endsWith("is a simple type, so it must have no element information item [children].");
+                
+           
+        }
+        
+        private String getAttachmentElementName(SAXParseException exception) {
+            String msg = exception.getMessage();
+            String str[] = msg.split("'");
+            return str[1];
+        }
+        
+        private boolean findIncludeNode(Node checkNode, String mtomElement) {
+            boolean ret = false;
+            NodeList nList = checkNode.getChildNodes();
+            for (int i = 0; i < nList.getLength(); i++) {
+                Node nNode = nList.item(i);
+                if (nNode.getLocalName() != null 
+                    && nNode.getLocalName().equals(mtomElement)) {
+                    NodeList subNodeList = nNode.getChildNodes();
+                    for (int j = 0; j < subNodeList.getLength(); j++) {
+                        Node subNode = subNodeList.item(j);
+                        if (subNode.getNamespaceURI().equals("http://www.w3.org/2004/08/xop/include")
+                            && subNode.getLocalName().equals("Include")) {
+                            // This is the Mtom element which break the SchemaValidation so ignore this
+                            return true;
+                        }
+                    }
+                } else {
+                    ret = findIncludeNode(nNode, mtomElement);
+                }
+            }
+            return ret;
+        }
+    }
+
 }

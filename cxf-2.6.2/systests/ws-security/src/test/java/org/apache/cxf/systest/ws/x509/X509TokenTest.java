@@ -20,10 +20,9 @@
 package org.apache.cxf.systest.ws.x509;
 
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
-import javax.crypto.Cipher;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
 import javax.xml.namespace.QName;
 import javax.xml.ws.BindingProvider;
 import javax.xml.ws.Service;
@@ -32,14 +31,15 @@ import org.apache.cxf.Bus;
 import org.apache.cxf.bus.spring.SpringBusFactory;
 import org.apache.cxf.endpoint.Client;
 import org.apache.cxf.frontend.ClientProxy;
+import org.apache.cxf.headers.Header;
+import org.apache.cxf.jaxb.JAXBDataBinding;
 import org.apache.cxf.systest.ws.common.SecurityTestUtil;
 import org.apache.cxf.systest.ws.ut.SecurityHeaderCacheInterceptor;
 import org.apache.cxf.systest.ws.x509.server.Server;
 import org.apache.cxf.testutil.common.AbstractBusClientServerTestBase;
 import org.apache.cxf.ws.security.SecurityConstants;
-
 import org.example.contract.doubleit.DoubleItPortType;
-
+import org.example.contract.doubleit.DoubleItPortType2;
 import org.junit.BeforeClass;
 
 /**
@@ -52,15 +52,13 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
     private static final String NAMESPACE = "http://www.example.org/contract/DoubleIt";
     private static final QName SERVICE_QNAME = new QName(NAMESPACE, "DoubleItService");
 
-    private boolean unrestrictedPoliciesInstalled = checkUnrestrictedPoliciesInstalled();
-    
     @BeforeClass
     public static void startServers() throws Exception {
         assertTrue(
-            "Server failed to launch",
-            // run the server in the same process
-            // set this to false to fork
-            launchServer(Server.class, true)
+                "Server failed to launch",
+                // run the server in the same process
+                // set this to false to fork
+                launchServer(Server.class, true)
         );
     }
     
@@ -72,9 +70,6 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
 
     @org.junit.Test
     public void testKeyIdentifier() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -91,14 +86,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testIssuerSerial() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -115,14 +108,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testThumbprint() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -139,14 +130,34 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testContentEncryptedElements() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItContentEncryptedElementsPort");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricIssuerSerial() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -161,16 +172,38 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         DoubleItPortType x509Port = 
                 service.getPort(portQName, DoubleItPortType.class);
         updateAddressPort(x509Port, PORT);
+
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testAsymmetricSP11() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItAsymmetricSP11Port");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricThumbprint() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -187,14 +220,81 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testAsymmetricEncryptBeforeSigning() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItAsymmetricEncryptBeforeSigningPort");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testAsymmetricEncryptBeforeSigningNoEnc() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItAsymmetricEncryptBeforeSigningNoEncPort");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testAsymmetricEncryptSignature() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItAsymmetricEncryptSignaturePort");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricProtectTokens() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -211,14 +311,58 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testAsymmetricUsernameToken() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItAsymmetricUsernameTokenPort");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testSymmetricUsernameToken() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItSymmetricUsernameTokenPort");
+        DoubleItPortType x509Port = 
+                service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(x509Port, PORT);
+        
+        x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testSymmetricProtectTokens() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -235,14 +379,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportEndorsing() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -259,14 +401,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportEndorsingSP11() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -283,14 +423,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportSignedEndorsing() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -307,14 +445,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportEndorsingEncrypted() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -331,14 +467,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportSignedEndorsingEncrypted() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -355,14 +489,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricSignature() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -379,14 +511,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricSignatureSP11() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -403,14 +533,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricEncryption() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -427,14 +555,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testAsymmetricSignatureReplay() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -465,14 +591,12 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
             assertTrue(ex.getMessage().contains(error));
         }
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportSupportingSigned() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -488,13 +612,13 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
                 service.getPort(portQName, DoubleItPortType.class);
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportSupportingSignedCertConstraints() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -526,13 +650,13 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         ((BindingProvider)x509Port).getRequestContext().put(SecurityConstants.SIGNATURE_USERNAME, "alice");
     
         x509Port.doubleIt(25);
+        
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
     }
     
     @org.junit.Test
     public void testTransportKVT() throws Exception {
-        if (!unrestrictedPoliciesInstalled) {
-            return;
-        }
 
         SpringBusFactory bf = new SpringBusFactory();
         URL busFile = X509TokenTest.class.getResource("client/client.xml");
@@ -549,26 +673,127 @@ public class X509TokenTest extends AbstractBusClientServerTestBase {
         updateAddressPort(x509Port, PORT2);
         x509Port.doubleIt(25);
         
+        ((java.io.Closeable)x509Port).close();
         bus.shutdown(true);
     }
     
-    private boolean checkUnrestrictedPoliciesInstalled() {
-        try {
-            byte[] data = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
+    @org.junit.Test
+    public void testKeyIdentifier2() throws Exception {
 
-            SecretKey key192 = new SecretKeySpec(
-                new byte[] {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-                            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-                            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17},
-                            "AES");
-            Cipher c = Cipher.getInstance("AES");
-            c.init(Cipher.ENCRYPT_MODE, key192);
-            c.doFinal(data);
-            return true;
-        } catch (Exception e) {
-            //
-        }
-        return false;
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+        
+        URL wsdl = X509TokenTest.class.getResource("DoubleItOperations.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+        QName portQName = new QName(NAMESPACE, "DoubleItKeyIdentifierPort2");
+        DoubleItPortType2 x509Port = 
+                service.getPort(portQName, DoubleItPortType2.class);
+        updateAddressPort(x509Port, PORT);
+        
+        List<Header> headers = new ArrayList<Header>();
+        Header dummyHeader = new Header(new QName("uri:org.apache.cxf", "dummy"), "dummy-header",
+                                        new JAXBDataBinding(String.class));
+        headers.add(dummyHeader);
+        ((BindingProvider)x509Port).getRequestContext().put(Header.HEADER_LIST, headers);
+        
+        int response = x509Port.doubleIt(25);
+        assertEquals(50, response);
+        
+        int response2 = x509Port.doubleIt2(15);
+        assertEquals(30, response2);
+        
+        ((java.io.Closeable)x509Port).close();
+        bus.shutdown(true);
     }
+    
+    @org.junit.Test
+    public void testSupportingToken() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+       
+        // Successful invocation
+        QName portQName = new QName(NAMESPACE, "DoubleItTransportSupportingTokenPort");
+        DoubleItPortType port = service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(port, PORT2);
+        port.doubleIt(25);
+        
+        // This should fail, as the client is not sending an X.509 Supporting Token
+        portQName = new QName(NAMESPACE, "DoubleItTransportSupportingTokenPort2");
+        port = service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(port, PORT2);
+        
+        try {
+            port.doubleIt(25);
+            fail("Failure expected on not sending an X.509 Supporting Token");
+        } catch (javax.xml.ws.soap.SOAPFaultException ex) {
+            String error = "These policy alternatives can not be satisfied";
+            assertTrue(ex.getMessage().contains(error));
+        }
+        
+        // This should fail, as the client is not sending a PKI Token
+        portQName = new QName(NAMESPACE, "DoubleItTransportPKISupportingTokenPort");
+        port = service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(port, PORT2);
+        
+        try {
+            port.doubleIt(25);
+            fail("Failure expected on not sending a PKI token");
+        } catch (javax.xml.ws.soap.SOAPFaultException ex) {
+            String error = "These policy alternatives can not be satisfied";
+            assertTrue(ex.getMessage().contains(error));
+        }
+        
+        ((java.io.Closeable)port).close();
+        bus.shutdown(true);
+    }
+    
+    @org.junit.Test
+    public void testNegativeEndorsing() throws Exception {
+
+        SpringBusFactory bf = new SpringBusFactory();
+        URL busFile = X509TokenTest.class.getResource("client/client.xml");
+
+        Bus bus = bf.createBus(busFile.toString());
+        SpringBusFactory.setDefaultBus(bus);
+        SpringBusFactory.setThreadDefaultBus(bus);
+
+        URL wsdl = X509TokenTest.class.getResource("DoubleItX509.wsdl");
+        Service service = Service.create(wsdl, SERVICE_QNAME);
+       
+        // Successful invocation
+        QName portQName = new QName(NAMESPACE, "DoubleItTransportNegativeEndorsingPort");
+        DoubleItPortType port = service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(port, PORT2);
+        port.doubleIt(25);
+        
+        // This should fail, as the client is not endorsing the token
+        portQName = new QName(NAMESPACE, "DoubleItTransportNegativeEndorsingPort2");
+        port = service.getPort(portQName, DoubleItPortType.class);
+        updateAddressPort(port, PORT2);
+        
+        try {
+            port.doubleIt(25);
+            fail("Failure expected on not endorsing the token");
+        } catch (javax.xml.ws.soap.SOAPFaultException ex) {
+            String error = "These policy alternatives can not be satisfied";
+            assertTrue(ex.getMessage().contains(error));
+        }
+        
+        ((java.io.Closeable)port).close();
+        bus.shutdown(true);
+    }
+    
     
 }

@@ -33,7 +33,6 @@ import javax.xml.ws.wsaddressing.W3CEndpointReference;
 import javax.xml.ws.wsaddressing.W3CEndpointReferenceBuilder;
 
 import org.w3c.dom.Element;
-
 import org.apache.cxf.common.i18n.Message;
 import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.helpers.DOMUtils;
@@ -85,15 +84,18 @@ public class EndpointReferenceBuilder {
                                                                 LOG, bindingId).toString());
         }
         
-        W3CEndpointReferenceBuilder builder = new W3CEndpointReferenceBuilder();      
-        builder.address(this.endpoint.getEndpointInfo().getAddress());
+        W3CEndpointReferenceBuilder builder = new W3CEndpointReferenceBuilder();
+        String eiAddress = this.endpoint.getEndpointInfo().getAddress();
+        builder.address(eiAddress);
         
         builder.serviceName(this.endpoint.getService().getName());
         builder.endpointName(this.endpoint.getEndpointInfo().getName());
 
         if (this.endpoint.getEndpointInfo().getService().getDescription() != null) {
-            builder.wsdlDocumentLocation(this.endpoint.getEndpointInfo().getService().getDescription()
-                .getBaseURI());
+            String wsdlBaseUri = this.endpoint.getEndpointInfo().getService().getDescription().getBaseURI();
+
+            builder.wsdlDocumentLocation((wsdlBaseUri != null && wsdlBaseUri.startsWith("http://")) 
+                    ? wsdlBaseUri : eiAddress + "?wsdl");
         }
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         try {

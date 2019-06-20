@@ -25,6 +25,8 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.security.AccessController;
+import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
@@ -32,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.activation.DataHandler;
@@ -60,6 +63,7 @@ import org.apache.cxf.jaxb.JAXBDataBinding;
 import org.apache.cxf.message.Attachment;
 import org.apache.cxf.message.Exchange;
 import org.apache.cxf.message.Message;
+import org.apache.cxf.message.MessageUtils;
 import org.apache.cxf.phase.Phase;
 import org.apache.cxf.service.Service;
 import org.apache.cxf.service.model.BindingMessageInfo;
@@ -73,6 +77,23 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
     private static final Map<String, Method> SWA_REF_METHOD 
         = new ConcurrentHashMap<String, Method>(4, 0.75f, 2);
     
+    private static boolean skipHasSwaRef;
+    
+    static {
+
+        String skipSwaRef = System.getProperty("cxf.multipart.attachment");
+        LOG.log(Level.FINE, "cxf.multipart.attachment property is set to " + skipSwaRef);
+
+        if (skipSwaRef != null 
+            && skipSwaRef.trim().length() > 0
+            && skipSwaRef.trim().equalsIgnoreCase("false")) {
+            skipHasSwaRef = true;
+        } else {
+            skipHasSwaRef = false;
+        }
+
+    }
+    
     AttachmentOutInterceptor attachOut = new AttachmentOutInterceptor();
     
     public SwAOutInterceptor() {
@@ -81,11 +102,20 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
         addBefore(WrapperClassOutInterceptor.class.getName());
     }
     
-    private boolean callSWARefMethod(JAXBContext ctx) {
+    private boolean callSWARefMethod(final JAXBContext ctx) {
         Method m = SWA_REF_METHOD.get(ctx.getClass().getName());
         if (m == null && !SWA_REF_METHOD.containsKey(ctx.getClass().getName())) {
             try {
-                m = ctx.getClass().getMethod("hasSwaRef", new Class[0]);
+                m = AccessController.doPrivileged(new PrivilegedExceptionAction<Method>() {
+
+                    public Method run() throws Exception {
+                        Method hasSwaRefMethod = ctx.getClass().getMethod("hasSwaRef", new Class[0]);
+                        if (!hasSwaRefMethod.isAccessible()) {
+                            hasSwaRefMethod.setAccessible(true);
+                        }
+                        return hasSwaRefMethod;
+                    }
+                });
                 SWA_REF_METHOD.put(ctx.getClass().getName(), m);
             } catch (Exception e) {
                 //ignore
@@ -116,6 +146,13 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
             return;
         }
         
+        Boolean newAttachment = false;
+        Message exOutMsg = ex.getOutMessage();
+        if (exOutMsg != null) {
+            newAttachment = MessageUtils.isTrue(exOutMsg.getContextualProperty("cxf.add.attachments"));
+            LOG.log(Level.FINE, "Request context attachment property: cxf.add.attachments is set to: " + newAttachment);
+        }
+        
         SoapBodyInfo sbi = bmi.getExtensor(SoapBodyInfo.class);
         
         if (sbi == null || sbi.getAttachments() == null || sbi.getAttachments().size() == 0) {
@@ -123,12 +160,24 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
             DataBinding db = s.getDataBinding();
             if (db instanceof JAXBDataBinding
                 && hasSwaRef((JAXBDataBinding) db)) {
-                setupAttachmentOutput(message);
+                Boolean includeAttachs = false;
+                Message exInpMsg = ex.getInMessage();
+                LOG.log(Level.FINE, "Exchange Input message: " + exInpMsg);
+                if (exInpMsg != null) {
+                    includeAttachs = MessageUtils.isTrue(exInpMsg.getContextualProperty("cxf.add.attachments"));
+                }   
+                LOG.log(Level.FINE, "Add attachments message property: cxf.add.attachments value is " + includeAttachs);
+                if (!skipHasSwaRef || includeAttachs || newAttachment) {
+                    setupAttachmentOutput(message);
+                } else {
+                    skipAttachmentOutput(message);
+                }                
             }
             return;
         }
         processAttachments(message, sbi);
     }
+    
     protected void processAttachments(SoapMessage message, SoapBodyInfo sbi) {
         Collection<Attachment> atts = setupAttachmentOutput(message);
         List<Object> outObjects = CastUtils.cast(message.getContent(List.class));
@@ -219,7 +268,8 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
             atts.add(att);
         }
     }
-    private boolean hasSwaRef(JAXBDataBinding db) {
+
+    protected boolean hasSwaRef(JAXBDataBinding db) {
         JAXBContext context = db.getContext();
         return callSWARefMethod(context);
     }
@@ -243,13 +293,16 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
             }
         } else {
             ByteArrayOutputStream bwriter = new ByteArrayOutputStream();
-            XMLStreamWriter writer = StaxUtils.createXMLStreamWriter(bwriter);
+            XMLStreamWriter writer = null;
             try {
+                writer = StaxUtils.createXMLStreamWriter(bwriter);
                 StaxUtils.copy(o, writer);
                 writer.flush();
                 ds = new ByteDataSource(bwriter.toByteArray(), ct);
             } catch (XMLStreamException e1) {
                 throw new Fault(e1);
+            } finally {
+                StaxUtils.close(writer);
             }
         }
         return ds;
@@ -286,8 +339,7 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
         // We have attachments, so add the interceptor
         message.getInterceptorChain().add(attachOut);
         // We should probably come up with another property for this
-        message.put(AttachmentOutInterceptor.WRITE_ATTACHMENTS, Boolean.TRUE);
-        
+        message.put(AttachmentOutInterceptor.WRITE_ATTACHMENTS, Boolean.TRUE);       
         
         Collection<Attachment> atts = message.getAttachments();
         if (atts == null) {
@@ -296,4 +348,24 @@ public class SwAOutInterceptor extends AbstractSoapInterceptor {
         }
         return atts;
     }
+    
+    private Collection<Attachment> skipAttachmentOutput(SoapMessage message) {
+
+        Collection<Attachment> atts = message.getAttachments();
+        
+        LOG.log(Level.FINE, "skipAttachmentOutput: getAttachments returned  " + atts);
+        
+        if (atts != null) {
+            // We have attachments, so add the interceptor
+            message.getInterceptorChain().add(attachOut);
+            // We should probably come up with another property for this
+            message.put(AttachmentOutInterceptor.WRITE_ATTACHMENTS, Boolean.TRUE);
+        } else {    
+            atts = new ArrayList<Attachment>();
+            message.setAttachments(atts);
+        }               
+        
+        return atts;
+    }
+
 }

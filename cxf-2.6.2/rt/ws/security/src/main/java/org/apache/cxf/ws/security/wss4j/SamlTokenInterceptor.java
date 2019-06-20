@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.logging.Logger;
@@ -45,6 +46,7 @@ import org.apache.cxf.common.classloader.ClassLoaderUtils;
 import org.apache.cxf.common.i18n.Message;
 import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.common.util.StringUtils;
+import org.apache.cxf.endpoint.Endpoint;
 import org.apache.cxf.headers.Header;
 import org.apache.cxf.helpers.CastUtils;
 import org.apache.cxf.helpers.DOMUtils;
@@ -54,10 +56,12 @@ import org.apache.cxf.message.MessageUtils;
 import org.apache.cxf.phase.Phase;
 import org.apache.cxf.resource.ResourceManager;
 import org.apache.cxf.security.SecurityContext;
+import org.apache.cxf.service.model.EndpointInfo;
 import org.apache.cxf.ws.policy.AssertionInfo;
 import org.apache.cxf.ws.policy.AssertionInfoMap;
 import org.apache.cxf.ws.policy.PolicyException;
 import org.apache.cxf.ws.security.SecurityConstants;
+import org.apache.cxf.ws.security.cache.ReplayCacheFactory;
 import org.apache.cxf.ws.security.policy.SP12Constants;
 import org.apache.cxf.ws.security.policy.model.SamlToken;
 import org.apache.ws.security.WSConstants;
@@ -67,6 +71,7 @@ import org.apache.ws.security.WSSConfig;
 import org.apache.ws.security.WSSecurityEngine;
 import org.apache.ws.security.WSSecurityEngineResult;
 import org.apache.ws.security.WSSecurityException;
+import org.apache.ws.security.cache.ReplayCache;
 import org.apache.ws.security.components.crypto.Crypto;
 import org.apache.ws.security.components.crypto.CryptoFactory;
 import org.apache.ws.security.handler.RequestData;
@@ -84,8 +89,16 @@ import org.opensaml.common.SAMLVersion;
  * request, and to process a SAML Token on an inbound request.
  */
 public class SamlTokenInterceptor extends AbstractSoapInterceptor {
+    
+    public static final String WSSEC = "ws-security";
+    public static final String CXF_SIG_PROPS = WSSEC + ".signature.properties";
+    public static final String CXF_ENC_PROPS = WSSEC + ".encryption.properties";
+    public static final String SAML_ONE_TIME_USE_CACHE_INSTANCE = "ws-security.saml.cache.instance";
+    public static final String ENABLE_SAML_ONE_TIME_USE_CACHE = "ws-security.enable.saml.cache";
+    
     private static final Logger LOG = LogUtils.getL7dLogger(SamlTokenInterceptor.class);
     private static final Set<QName> HEADERS = new HashSet<QName>();
+
     static {
         HEADERS.add(new QName(WSConstants.WSSE_NS, "Security"));
         HEADERS.add(new QName(WSConstants.WSSE11_NS, "Security"));
@@ -173,7 +186,6 @@ public class SamlTokenInterceptor extends AbstractSoapInterceptor {
 
     private List<WSSecurityEngineResult> processToken(Element tokenElement, final SoapMessage message)
         throws WSSecurityException {
-        SAMLTokenProcessor p = new SAMLTokenProcessor();
         WSDocInfo wsDocInfo = new WSDocInfo(tokenElement.getOwnerDocument());
         RequestData data = new RequestData() {
             public CallbackHandler getCallbackHandler() {
@@ -208,9 +220,102 @@ public class SamlTokenInterceptor extends AbstractSoapInterceptor {
             }
         };
         data.setWssConfig(WSSConfig.getNewInstance());
+        ReplayCache samlCache = 
+                getReplayCache(
+                    message, ENABLE_SAML_ONE_TIME_USE_CACHE, 
+                    SAML_ONE_TIME_USE_CACHE_INSTANCE
+            );
+        data.setSamlOneTimeUseReplayCache(samlCache);
+        SAMLTokenProcessor p = new SAMLTokenProcessor();
+        // Get the cryptor properties and set them into requestData
+        Object o = message.getContextualProperty(CXF_SIG_PROPS);
+        // System.out.println("sigProps:" + o);
+        if (o != null) {
+            // @TJJ was forced to add a try catch for the 
+            // Map<String, Object> sigPropsMap = (Map<String, Object>)o;
+            // As compiler wont compile because its an unchecked cast
+            @SuppressWarnings("unchecked")
+            Map<String, Object> sigPropsMap = (Map<String, Object>)o;
+            Properties sigProps = new Properties();
+            sigProps.putAll(sigPropsMap);
+            //System.out.println("sigProps:" + sigProps);
+            //org.apache.ws.security.crypto.provider=org.apache.ws.security.components.crypto.Merlin
+            sigProps.put("org.apache.ws.security.crypto.provider", "org.apache.ws.security.components.crypto.Merlin");
+            Crypto sigCrypto = CryptoFactory.getInstance(sigProps);
+            //System.out.println("sig/encCrypto:" + sigCrypto);
+            data.setEncCrypto(sigCrypto);
+        }
+        // Get the enc cryptor properties and set them into requestData
+        Object oe = message.getContextualProperty(CXF_ENC_PROPS);
+        //System.out.println("encProps:" + oe);
+        if (oe != null) {
+            // @TJJ was forced to add a unchecked warning 
+            // Map<String, Object> sigPropsMap = (Map<String, Object>)oe;
+            // As compiler wont compile because its an unchecked cast
+            @SuppressWarnings("unchecked")
+            Map<String, Object> encPropsMap = (Map<String, Object>)oe;
+            Properties encProps = new Properties();
+            encProps.putAll(encPropsMap);
+            //org.apache.ws.security.crypto.provider=org.apache.ws.security.components.crypto.Merlin
+            //System.out.println("enc/sigProps:" + encProps);
+            Crypto encCrypto = CryptoFactory.getInstance(encProps);
+            //System.out.println("sig/encCrypto:" + encCrypto);
+            data.setSigCrypto(encCrypto);
+        }
+
+
         List<WSSecurityEngineResult> results = 
             p.handleToken(tokenElement, data, wsDocInfo);
         return results;
+    }
+
+    /**
+     * Get a ReplayCache instance. It first checks to see whether caching has been explicitly
+     * enabled or disabled via the booleanKey argument. If it has been set to false then no
+     * replay caching is done (for this booleanKey). If it has not been specified, then caching
+     * is enabled only if we are not the initiator of the exchange. If it has been specified, then
+     * caching is enabled.
+     * 
+     * It tries to get an instance of ReplayCache via the instanceKey argument from a
+     * contextual property, and failing that the message exchange. If it can't find any, then it
+     * defaults to using an EH-Cache instance and stores that on the message exchange.
+     */
+    protected ReplayCache getReplayCache(
+                                         SoapMessage message, String booleanKey, String instanceKey) {
+        boolean specified = false;
+        Object o = message.getContextualProperty(booleanKey);
+        if (o != null) {
+            if (!MessageUtils.isTrue(o)) {
+                return null;
+            }
+            specified = true;
+        }
+
+        if (!specified && MessageUtils.isRequestor(message)) {
+            return null;
+        }
+        Endpoint ep = message.getExchange().get(Endpoint.class);
+        if (ep != null && ep.getEndpointInfo() != null) {
+            EndpointInfo info = ep.getEndpointInfo();
+            synchronized (info) {
+                ReplayCache replayCache =
+                                (ReplayCache) message.getContextualProperty(instanceKey);
+                if (replayCache == null) {
+                    replayCache = (ReplayCache) info.getProperty(instanceKey);
+                }
+                if (replayCache == null) {
+                    ReplayCacheFactory replayCacheFactory = ReplayCacheFactory.newInstance();
+                    String cacheKey = instanceKey;
+                    if (info.getName() != null) {
+                        cacheKey += "-" + info.getName().toString().hashCode();
+                    }
+                    replayCache = replayCacheFactory.newReplayCache(cacheKey, message);
+                    info.setProperty(instanceKey, replayCache);
+                }
+                return replayCache;
+            }
+        }
+        return null;
     }
 
     private SamlToken assertSamlTokens(SoapMessage message) {
@@ -250,6 +355,7 @@ public class SamlTokenInterceptor extends AbstractSoapInterceptor {
                 return;
             }
             Element el = (Element)h.getObject();
+            el = (Element)DOMUtils.getDomElement(el);
             el.appendChild(wrapper.toDOM(el.getOwnerDocument()));
         } catch (WSSecurityException ex) {
             policyNotAsserted(tok, ex.getMessage(), message);

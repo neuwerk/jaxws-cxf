@@ -46,7 +46,6 @@ package org.apache.cxf.ws.policy;
 import java.util.Collection;
 import javax.wsdl.extensions.UnknownExtensibilityElement;
 import javax.xml.namespace.QName;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLStreamException;
 
 import org.w3c.dom.Document;
@@ -120,8 +119,6 @@ public class ServiceModelPolicyUpdater {
             ei.getService().addExtensor(uee);
         } catch (XMLStreamException ex) {
             throw new RuntimeException("Could not serialize policy", ex);
-        } catch (ParserConfigurationException e) {
-            throw new RuntimeException("Could not serialize policy", e);
         }
     }
 }

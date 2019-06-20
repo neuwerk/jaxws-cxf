@@ -67,6 +67,9 @@ import org.junit.BeforeClass;
 public class SAMLTokenValidatorTest extends org.junit.Assert {
     
     private static TokenStore tokenStore;
+    //Borrowed from the updated version of WSS4J org.apache.wss4j.common.WSS4JConstants.WSS_SAML2_TOKEN_TYPE
+    private static final String WSS_SAML2_TOKEN_TYPE = 
+            "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#UsernameToken";
     
     @BeforeClass
     public static void init() {
@@ -236,6 +239,7 @@ public class SAMLTokenValidatorTest extends org.junit.Assert {
         assertTrue(validatorResponse.getToken().getState() == STATE.EXPIRED);
     }
     
+    
     /**
      * Test a SAML 2.0 Assertion with an invalid condition
      */
@@ -244,28 +248,27 @@ public class SAMLTokenValidatorTest extends org.junit.Assert {
         TokenValidator samlTokenValidator = new SAMLTokenValidator();
         TokenValidatorParameters validatorParameters = createValidatorParameters();
         TokenRequirements tokenRequirements = validatorParameters.getTokenRequirements();
-        
+
         // Create a ValidateTarget consisting of a SAML Assertion
         Crypto crypto = CryptoFactory.getInstance(getEncryptionProperties());
         CallbackHandler callbackHandler = new PasswordCallbackHandler();
-        Element samlToken = 
-            createSAMLAssertion(WSConstants.WSS_SAML2_TOKEN_TYPE, crypto, "mystskey", callbackHandler, 50);
+        Element samlToken =
+            createSAMLAssertion(WSS_SAML2_TOKEN_TYPE, crypto, "mystskey", callbackHandler, 50);
         Document doc = samlToken.getOwnerDocument();
         samlToken = (Element)doc.appendChild(samlToken);
-        
+
         ReceivedToken validateTarget = new ReceivedToken(samlToken);
         tokenRequirements.setValidateTarget(validateTarget);
         validatorParameters.setToken(validateTarget);
-        
+
         assertTrue(samlTokenValidator.canHandleToken(validateTarget));
         Thread.sleep(100);
-        TokenValidatorResponse validatorResponse = 
+        TokenValidatorResponse validatorResponse =
             samlTokenValidator.validateToken(validatorParameters);
         assertTrue(validatorResponse != null);
         assertTrue(validatorResponse.getToken() != null);
         assertTrue(validatorResponse.getToken().getState() == STATE.EXPIRED);
     }
-    
     
     /**
      * Test a SAML 1.1 Assertion using Certificate Constraints 

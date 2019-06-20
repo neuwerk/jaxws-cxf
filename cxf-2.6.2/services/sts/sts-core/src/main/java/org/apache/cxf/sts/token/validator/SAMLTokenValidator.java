@@ -31,7 +31,6 @@ import java.util.logging.Logger;
 import javax.security.auth.callback.CallbackHandler;
 
 import org.w3c.dom.Element;
-
 import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.sts.STSConstants;
 import org.apache.cxf.sts.STSPropertiesMBean;
@@ -146,6 +145,22 @@ public class SAMLTokenValidator implements TokenValidator {
             SAMLTokenPrincipal samlPrincipal = new SAMLTokenPrincipal(assertion);
             response.setPrincipal(samlPrincipal);
             
+            if (!assertion.isSigned()) {
+                LOG.log(Level.WARNING, "The received assertion is not signed, and therefore not trusted");
+                return response;
+            }
+                
+            RequestData requestData = new RequestData();
+            requestData.setSigCrypto(sigCrypto);
+            WSSConfig wssConfig = WSSConfig.getNewInstance();
+            requestData.setWssConfig(wssConfig);
+            requestData.setCallbackHandler(callbackHandler);
+
+            // Verify the signature
+            assertion.verifySignature(
+                requestData, new WSDocInfo(validateTargetElement.getOwnerDocument())
+            );
+                
             SecurityToken secToken = null;
             byte[] signatureValue = assertion.getSignatureValue();
             if (tokenParameters.getTokenStore() != null && signatureValue != null
@@ -162,22 +177,6 @@ public class SAMLTokenValidator implements TokenValidator {
             }
             
             if (secToken == null) {
-                if (!assertion.isSigned()) {
-                    LOG.log(Level.WARNING, "The received assertion is not signed, and therefore not trusted");
-                    return response;
-                }
-                
-                RequestData requestData = new RequestData();
-                requestData.setSigCrypto(sigCrypto);
-                WSSConfig wssConfig = WSSConfig.getNewInstance();
-                requestData.setWssConfig(wssConfig);
-                requestData.setCallbackHandler(callbackHandler);
-                
-                // Verify the signature
-                assertion.verifySignature(
-                    requestData, new WSDocInfo(validateTargetElement.getOwnerDocument())
-                );
-                
                 // Validate the assertion against schemas/profiles
                 validateAssertion(assertion);
 
@@ -187,7 +186,7 @@ public class SAMLTokenValidator implements TokenValidator {
                 trustCredential.setPublicKey(samlKeyInfo.getPublicKey());
                 trustCredential.setCertificates(samlKeyInfo.getCerts());
     
-                validator.validate(trustCredential, requestData);
+                trustCredential = validator.validate(trustCredential, requestData);
 
                 // Finally check that subject DN of the signing certificate matches a known constraint
                 X509Certificate cert = null;
@@ -199,7 +198,7 @@ public class SAMLTokenValidator implements TokenValidator {
                     return response;
                 }
             }
-           
+            
             // Get the realm of the SAML token
             String tokenRealm = null;
             if (samlRealmCodec != null) {
@@ -209,7 +208,7 @@ public class SAMLTokenValidator implements TokenValidator {
                     Properties props = secToken.getProperties();
                     if (props != null) {
                         String cachedRealm = props.getProperty(STSConstants.TOKEN_REALM);
-                        if (!tokenRealm.equals(cachedRealm)) {
+                        if (cachedRealm != null && !tokenRealm.equals(cachedRealm)) {
                             return response;
                         }
                     }
@@ -327,4 +326,5 @@ public class SAMLTokenValidator implements TokenValidator {
             tokenStore.add(identifier, securityToken);
         }
     }
+
 }

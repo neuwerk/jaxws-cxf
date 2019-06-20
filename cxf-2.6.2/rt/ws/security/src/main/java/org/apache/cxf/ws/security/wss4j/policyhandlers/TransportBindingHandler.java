@@ -35,6 +35,7 @@ import org.w3c.dom.Element;
 
 
 import org.apache.cxf.binding.soap.SoapMessage;
+import org.apache.cxf.helpers.DOMUtils;
 import org.apache.cxf.interceptor.Fault;
 import org.apache.cxf.ws.policy.AssertionInfo;
 import org.apache.cxf.ws.policy.AssertionInfoMap;
@@ -109,7 +110,9 @@ public class TransportBindingHandler extends AbstractBindingBuilder {
             } else if (token instanceof SamlToken) {
                 AssertionWrapper assertionWrapper = addSamlToken((SamlToken)token);
                 if (assertionWrapper != null) {
-                    addSupportingElement(assertionWrapper.toDOM(saaj.getSOAPPart()));
+                    Element envelope = saaj.getSOAPPart().getEnvelope();
+                    envelope = (Element)DOMUtils.getDomElement(envelope);
+                    addSupportingElement(assertionWrapper.toDOM(envelope.getOwnerDocument()));
                 }
             } else {
                 //REVISIT - not supported for signed.  Exception?
@@ -295,7 +298,10 @@ public class TransportBindingHandler extends AbstractBindingBuilder {
             );
         } else if (token instanceof SamlToken) {
             AssertionWrapper assertionWrapper = addSamlToken((SamlToken)token);
-            assertionWrapper.toDOM(saaj.getSOAPPart());
+
+            Element envelope = saaj.getSOAPPart().getEnvelope();
+            envelope = (Element)DOMUtils.getDomElement(envelope);
+            assertionWrapper.toDOM(envelope.getOwnerDocument());
             storeAssertionAsSecurityToken(assertionWrapper);
             addSig(
                 signatureValues, 

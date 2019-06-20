@@ -21,6 +21,7 @@ package org.apache.cxf.jaxb;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.ref.SoftReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -30,12 +31,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.LinkedBlockingDeque;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -108,7 +111,10 @@ public class JAXBDataBinding extends AbstractDataBinding
                                                                                Node.class,
                                                                                XMLEventWriter.class,
                                                                                XMLStreamWriter.class};
-    
+    private static final boolean ENABLE_MARSHALL_POOLING = true;
+    private static final boolean ENABLE_UNMARSHALL_POOLING = true;
+    private static final int MAX_LOAD_FACTOR = 50;
+
     private static class DelayedDOMResult extends DOMResult {
         private final URL resource;
         private final String publicId;
@@ -205,6 +211,11 @@ public class JAXBDataBinding extends AbstractDataBinding
         = new ModCountCopyOnWriteArrayList<Interceptor<? extends Message>>();
     private ModCountCopyOnWriteArrayList<Interceptor<? extends Message>> inFault
         = new ModCountCopyOnWriteArrayList<Interceptor<? extends Message>>();
+
+    private Deque<SoftReference<Marshaller>> marshallers 
+        = new LinkedBlockingDeque<SoftReference<Marshaller>>(MAX_LOAD_FACTOR);
+    private Deque<SoftReference<Unmarshaller>> unmarshallers 
+        = new LinkedBlockingDeque<SoftReference<Unmarshaller>>(MAX_LOAD_FACTOR);
 
     public JAXBDataBinding() {
     }
@@ -816,6 +827,115 @@ public class JAXBDataBinding extends AbstractDataBinding
     public List<Interceptor<? extends Message>> getOutInterceptors() {
         return out;
     }
+  
+    /**
+     * releaseJAXBMarshalller
+     * Do not call this method if an exception occurred while using the
+     * Marshaller. We don't want an object in an invalid state.
+     * 
+     * @param marshaller Marshaller
+     */
+    public void releaseJAXBMarshaller(Marshaller marshaller) {
+        if (ENABLE_MARSHALL_POOLING && marshaller != null) {
+            marshallers.offerFirst(new SoftReference<Marshaller>(marshaller));
+        }
+    }    
 
+    /**
+     * Get JAXBMarshaller
+     * 
+     * @param context JAXBContext
+     * @throws JAXBException
+     */
+    public Marshaller getJAXBMarshaller() throws JAXBException {
+        Marshaller m = null;
 
+        if (!ENABLE_MARSHALL_POOLING) {
+            if (LOG.isLoggable(Level.FINE)) {
+                LOG.fine("Marshaller created [no pooling]");
+            }
+            m = getContext().createMarshaller();
+        } else {
+            SoftReference<Marshaller> ref = marshallers.poll();
+            while (ref != null && ref.get() == null) {
+                ref = marshallers.poll();
+            }
+            if (ref != null) {
+                m = ref.get();
+            }
+            if (m == null) {
+                if (LOG.isLoggable(Level.FINE)) {
+                    LOG.fine("Marshaller created [not in pool]");
+                }
+                m = getContext().createMarshaller();
+            } else {
+                if (LOG.isLoggable(Level.FINE)) {
+                    LOG.fine("Marshaller obtained [from  pool]");
+                }
+            }
+        }
+        return m;
+    }
+    
+    /**
+     * Get the unmarshaller. You must call releaseUnmarshaller to put it back into the pool
+     * 
+     * @param binding JAXBDataBinding
+     * @return Unmarshaller
+     * @throws JAXBException
+     */
+    public Unmarshaller getJAXBUnmarshaller() throws JAXBException {
+        if (!ENABLE_UNMARSHALL_POOLING) {
+            if (LOG.isLoggable(Level.FINE)) {
+                LOG.fine("Unmarshaller created [no pooling]");
+            }
+            return getContext().createUnmarshaller();
+        }
+        
+        Unmarshaller unm = null;
+        SoftReference<Unmarshaller> ref = unmarshallers.poll();
+        while (ref != null && ref.get() == null) {
+            ref = unmarshallers.poll();
+        }
+        if (ref != null) {
+            unm = ref.get();
+        }
+        if (unm == null) {
+            if (LOG.isLoggable(Level.FINE)) {
+                LOG.fine("Unmarshaller created [not in pool]");
+            }
+            unm = getContext().createUnmarshaller();
+        } else {
+            if (LOG.isLoggable(Level.FINE)) {
+                LOG.fine("Unmarshaller obtained [from  pool]");
+            }
+        }
+        return unm;
+    }
+
+    /**
+     * Release Unmarshaller Do not call this method if an exception occurred while using the
+     * Unmarshaller. We object my be in an invalid state.
+     * 
+     * @param context JAXBContext
+     * @param unmarshaller Unmarshaller
+     */
+    public void releaseJAXBUnmarshaller(Unmarshaller unmarshaller) {
+        if (LOG.isLoggable(Level.FINE)) {
+            LOG.fine("Unmarshaller placed back into pool");
+        }
+        if (ENABLE_UNMARSHALL_POOLING && unmarshaller != null) {
+            try {
+                //defect 176959
+                //Don't remove the event handler
+                //unmarshaller.setEventHandler(null);
+                unmarshallers.offerFirst(new SoftReference<Unmarshaller>(unmarshaller));
+            } catch (Throwable t) {
+                // Log the problem, and continue without pooling
+                if (LOG.isLoggable(Level.FINE)) {
+                    LOG.fine("The following exception is ignored. Processing continues " + t);
+                }
+            }
+        }
+    }    
 }

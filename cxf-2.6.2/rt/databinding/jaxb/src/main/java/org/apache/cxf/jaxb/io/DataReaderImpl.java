@@ -102,21 +102,24 @@ public class DataReaderImpl<T> extends JAXBDataBase implements DataReader<T> {
     }
     private Unmarshaller createUnmarshaller() {
         try {
-            Unmarshaller um = null;
-            um = context.createUnmarshaller();
-            if (databinding.getUnmarshallerListener() != null) {
-                um.setListener(databinding.getUnmarshallerListener());
-            }
+            Unmarshaller um = databinding.getJAXBUnmarshaller();
             if (setEventHandler) {
                 um.setEventHandler(new WSUIDValidationHandler(veventHandler));
             }
-            if (databinding.getUnmarshallerProperties() != null) {
-                for (Map.Entry<String, Object> propEntry 
-                    : databinding.getUnmarshallerProperties().entrySet()) {
-                    try {
-                        um.setProperty(propEntry.getKey(), propEntry.getValue());
-                    } catch (PropertyException pe) {
-                        LOG.log(Level.INFO, "PropertyException setting Marshaller properties", pe);
+            //If the unmarshaller has already been filled with all the initializing properties
+            //and attributes, we don't have to set again.
+            if (um.getAttachmentUnmarshaller() == null) {
+                if (databinding.getUnmarshallerListener() != null) {
+                    um.setListener(databinding.getUnmarshallerListener());
+                }
+
+                if (databinding.getUnmarshallerProperties() != null) {
+                    for (Map.Entry<String, Object> propEntry : databinding.getUnmarshallerProperties().entrySet()) {
+                        try {
+                            um.setProperty(propEntry.getKey(), propEntry.getValue());
+                        } catch (PropertyException pe) {
+                            LOG.log(Level.INFO, "PropertyException setting Marshaller properties", pe);
+                        }
                     }
                 }
             }
@@ -154,14 +157,20 @@ public class DataReaderImpl<T> extends JAXBDataBase implements DataReader<T> {
             }
         }
         
-        return JAXBEncoderDecoder.unmarshall(createUnmarshaller(), reader, part, 
-                                             unwrapJAXBElement);
+        Unmarshaller unmarshaller = createUnmarshaller();
+        Object result = JAXBEncoderDecoder.unmarshall(unmarshaller, reader, part,
+                                                      unwrapJAXBElement);
+        databinding.releaseJAXBUnmarshaller(unmarshaller);
+        return result;
     }
 
     public Object read(QName name, T input, Class<?> type) {
-        return JAXBEncoderDecoder.unmarshall(createUnmarshaller(), input,
-                                             name, type, 
-                                             unwrapJAXBElement);
+        Unmarshaller unmarshaller = createUnmarshaller();
+        Object result = JAXBEncoderDecoder.unmarshall(unmarshaller, input,
+                                                      name, type,
+                                                      unwrapJAXBElement);
+        databinding.releaseJAXBUnmarshaller(unmarshaller);
+        return result;
     }
 
 }

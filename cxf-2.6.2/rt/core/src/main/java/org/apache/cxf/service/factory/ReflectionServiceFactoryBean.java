@@ -45,7 +45,9 @@ import java.util.concurrent.Executor;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.wsdl.Definition;
 import javax.wsdl.Operation;
+import javax.wsdl.WSDLException;
 import javax.xml.bind.annotation.XmlAttachmentRef;
 import javax.xml.bind.annotation.XmlElementWrapper;
 import javax.xml.bind.annotation.XmlList;
@@ -104,6 +106,7 @@ import org.apache.cxf.service.model.OperationInfo;
 import org.apache.cxf.service.model.SchemaInfo;
 import org.apache.cxf.service.model.ServiceInfo;
 import org.apache.cxf.service.model.UnwrappedOperationInfo;
+import org.apache.cxf.wsdl.WSDLManager;
 import org.apache.cxf.wsdl11.WSDLServiceBuilder;
 import org.apache.cxf.wsdl11.WSDLServiceFactory;
 import org.apache.ws.commons.schema.XmlSchema;
@@ -391,8 +394,8 @@ public class ReflectionServiceFactoryBean extends AbstractServiceFactoryBean {
     protected void buildServiceFromWSDL(String url) {
         sendEvent(Event.CREATE_FROM_WSDL, url);
 
-        if (LOG.isLoggable(Level.INFO)) {
-            LOG.info("Creating Service " + getServiceQName() + " from WSDL: " + url);
+        if (LOG.isLoggable(Level.FINE)) {
+            LOG.fine("Creating Service " + getServiceQName() + " from WSDL: " + url);
         }
         populateFromClass = false;
         WSDLServiceFactory factory = new WSDLServiceFactory(getBus(), url, getServiceQName());
@@ -437,8 +440,8 @@ public class ReflectionServiceFactoryBean extends AbstractServiceFactoryBean {
             throw new ServiceConstructionException(new Message("NO_WSDL_PROVIDED", LOG, 
                                                                getServiceClass().getName()));
         }
-        if (LOG.isLoggable(Level.INFO)) {
-            LOG.info("Creating Service " + getServiceQName() + " from class " + getServiceClass().getName());
+        if (LOG.isLoggable(Level.FINE)) {
+            LOG.fine("Creating Service " + getServiceQName() + " from class " + getServiceClass().getName());
         }
         populateFromClass = true;
 
@@ -459,7 +462,7 @@ public class ReflectionServiceFactoryBean extends AbstractServiceFactoryBean {
 
         serviceInfo.setName(getServiceQName());
         serviceInfo.setTargetNamespace(serviceInfo.getName().getNamespaceURI());
-
+    
         sendEvent(Event.SERVICE_SET, getService());
 
         createInterface(serviceInfo);
@@ -524,12 +527,11 @@ public class ReflectionServiceFactoryBean extends AbstractServiceFactoryBean {
     }
 
     protected boolean isFromWsdl() {
-        return !populateFromClass && getWsdlURL() != null;
+        return !populateFromClass && getWsdlURL() != null &&  !isEmptywsdl(getWsdlURL());
     }
 
     protected void initializeServiceModel() {
         String wsdlurl = getWsdlURL();
-
         if (isFromWsdl()) {
             buildServiceFromWSDL(wsdlurl);
         } else {
@@ -2558,5 +2560,18 @@ public class ReflectionServiceFactoryBean extends AbstractServiceFactoryBean {
 
     public void setSchemaLocations(List<String> schemaLocations) {
         this.schemaLocations = schemaLocations;
+    }
+    private boolean isEmptywsdl(String wsdlUrl) {
+        Definition definition;
+        try {
+            definition = getBus().getExtension(WSDLManager.class).getDefinition(wsdlUrl);
+        } catch (WSDLException e) {
+            LOG.log(Level.WARNING, "Failed to parse WSDL", e);
+            return true;
+        }
+        if (definition.getPortTypes().isEmpty() && definition.getImports().isEmpty()) { 
+            return true;
+        }
+        return false;
     }
 }

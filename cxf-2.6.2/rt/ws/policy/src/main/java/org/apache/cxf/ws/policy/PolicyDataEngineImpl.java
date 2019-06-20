@@ -41,6 +41,9 @@ public class PolicyDataEngineImpl implements PolicyDataEngine {
     private Bus bus;
     private PolicyEngine policyEngine;
     
+    public PolicyDataEngineImpl() {
+    }
+    
     public PolicyDataEngineImpl(Bus bus) {
         this.bus = bus;
     }
@@ -73,7 +76,9 @@ public class PolicyDataEngineImpl implements PolicyDataEngine {
     public <T> T getPolicy(Message message, T confPolicy, PolicyCalculator<T> intersector) {
         List<T> policies = getPoliciesFromMessage(intersector.getDataClassName(), 
                                                   message, intersector.getDataClass());
-        policies.add(confPolicy);
+        if (!policies.contains(confPolicy)) {
+            policies.add(confPolicy);
+        }
         return getPolicy(policies, intersector);
     }
 
@@ -132,8 +137,8 @@ public class PolicyDataEngineImpl implements PolicyDataEngine {
         for (T p : policies) {
             if (null == compatible) {
                 compatible = p;
-            } else {
-                compatible = intersector.intersect(compatible, p);
+            } else if (compatible != p) {
+                compatible = intersector.intersect(p, compatible);
                 if (null == compatible) {
                     logAndThrowPolicyException(p);
                 }

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="cxf-ws-security-2.6.2" default="runLocalBuild" xmlns:mvn="antlib:org.apache.maven.artifact.ant">
+  <property name="cxf.base.dir" value="../../../.."/>
+  <property name="maven.home" value="${cxf.base.dir}/mirror.maker.prereqs/maven/apache-maven-3.0.4" />	
+  <taskdef uri="antlib:org.apache.maven.artifact.ant" resource="org/apache/maven/artifact/ant/antlib.xml" 
+           classpath="${cxf.base.dir}/mirror.maker.prereqs/maven-ant/lib/maven-ant-tasks-2.1.0.jar" />
+
+  <import file="${cxf.base.dir}/mirror.maker.build/imports/upload.xml"/>
+  <import file="${cxf.base.dir}/mirror.maker.build/imports/standard_tasks.xml"/>
+     
+  <target name="runLocalBuild">
+	     	
+     <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
+	    <arg value="-o" />
+	    <arg value="-fae" />
+	    <arg value="-e" />	    	  
+	    <arg value="clean" />
+	    <arg value="install" />
+	    <jvmarg value="-Xmx1024m" />
+	    <sysproperty key="maven.repo.local" value="${cxf.base.dir}/repository" />
+	    <sysproperty key="maven.online.mode" value="false" />
+	    <sysproperty key="obrRepository" value="NONE" />
+        <sysproperty key="skipTests" value="true" />
+     </mvn:mvn>      
+	    
+  </target>
+
+  <target name="runUnitTests">
+	     	
+     <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
+	   <arg value="-o" />
+	   <arg value="-fae" />
+	   <arg value="test" />        
+	   <jvmarg value="-Xmx1024m" />
+	   <sysproperty key="maven.repo.local" value="${cxf.base.dir}/repository" />
+	   <sysproperty key="maven.online.mode" value="false" />
+	   <sysproperty key="obrRepository" value="NONE" />        
+     </mvn:mvn>      
+	    
+  </target>
+	 
+  
+</project>

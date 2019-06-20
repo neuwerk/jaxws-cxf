@@ -119,7 +119,7 @@
         <cxf.spring.mock>spring-test</cxf.spring.mock>
         <cxf.stax.impl.groupId>org.codehaus.woodstox</cxf.stax.impl.groupId>
         <cxf.stax.impl.artifactId>woodstox-core-asl</cxf.stax.impl.artifactId>
-        <cxf.woodstox.core.version>4.1.4</cxf.woodstox.core.version>
+        <cxf.woodstox.core.version>4.2.0</cxf.woodstox.core.version>
         <cxf.stax.impl.version>${cxf.woodstox.core.version}</cxf.stax.impl.version>
         <cxf.woodstox.stax2-api.version>3.1.1</cxf.woodstox.stax2-api.version>
         <cxf.wsdl4j.version>1.6.2</cxf.wsdl4j.version>
@@ -130,7 +130,7 @@
         <cxf.oauth.bundle.version>20100527_1</cxf.oauth.bundle.version>
         <cxf.axiom.version>1.2.10</cxf.axiom.version>
         <cxf.jettison.version>1.3.2</cxf.jettison.version>
-        <cxf.wss4j.version>1.6.7</cxf.wss4j.version>
+        <cxf.wss4j.version>1.6.18</cxf.wss4j.version>
         <cxf.joda.time.version>1.6.2</cxf.joda.time.version>
         <cxf.joda.time.version2>2.1</cxf.joda.time.version2>
         <cxf.opensaml.version>2.5.1</cxf.opensaml.version>

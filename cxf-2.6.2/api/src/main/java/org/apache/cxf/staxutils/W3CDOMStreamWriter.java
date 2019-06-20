@@ -24,7 +24,6 @@ import java.util.Stack;
 
 import javax.xml.namespace.NamespaceContext;
 import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
 
@@ -34,8 +33,8 @@ import org.w3c.dom.DocumentFragment;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
+import org.apache.cxf.helpers.DOMUtils;
 import org.apache.cxf.helpers.MapNamespaceContext;
-import org.apache.cxf.helpers.XMLUtils;
 
 public class W3CDOMStreamWriter implements XMLStreamWriter {
     static final String XML_NS = "http://www.w3.org/2000/xmlns/";
@@ -46,8 +45,8 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
     private boolean nsRepairing;
     private Map<String, Object> properties = Collections.emptyMap();
 
-    public W3CDOMStreamWriter() throws ParserConfigurationException {
-        document = XMLUtils.newDocument();
+    public W3CDOMStreamWriter() {
+        document = DOMUtils.newDocument();
     }
 
     public W3CDOMStreamWriter(DocumentBuilder builder) {
@@ -61,10 +60,14 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
         this.document = frag.getOwnerDocument();
         currentNode = frag;
     }
+    public W3CDOMStreamWriter(Document document, DocumentFragment frag) {
+        this.document = document;
+        currentNode = frag;
+    }
 
     public W3CDOMStreamWriter(Element e) {
         this.document = e.getOwnerDocument();
-        
+
         currentNode = e;
         ((W3CNamespaceContext)context).setElement(e);
     }
@@ -73,7 +76,7 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
         currentNode = e;
         ((W3CNamespaceContext)context).setElement(e);
     }
-    
+
     public Element getCurrentNode() {
         if (currentNode instanceof Element) {
             return (Element)currentNode;
@@ -86,7 +89,7 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
         }
         return null;
     }
-    
+
     public void setNsRepairing(boolean b) {
         nsRepairing = b;
     }
@@ -109,21 +112,29 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
         setChild(element, true);
     }
     protected void setChild(Element element, boolean append) {
+        Node appendedChildNode = null;
         if (currentNode != null) {
             stack.push(currentNode);
             if (append) {
-                currentNode.appendChild(element);
+                appendedChildNode = currentNode.appendChild(element);
             }
         } else {
             if (append) {
-                document.appendChild(element);
+                appendedChildNode = document.appendChild(element);
             }
         }
         if (!(context instanceof W3CNamespaceContext)) {
-            context = new W3CNamespaceContext();
+            // set the outside namespace context
+            W3CNamespaceContext childContext = new W3CNamespaceContext();
+            childContext.setOutNamespaceContext(context);
+            context = childContext;
         }
         ((W3CNamespaceContext)context).setElement(element);
-        currentNode = element;
+        if (appendedChildNode != null) {
+            currentNode = org.apache.cxf.helpers.DOMUtils.getDomElement(appendedChildNode);
+        } else {
+            currentNode = element;
+        }
     }
 
     public void writeStartElement(String namespace, String local) throws XMLStreamException {
@@ -141,15 +152,25 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
             }
         }
     }
+
+    protected Element createElementNS(String ns, String pfx, String local) {
+        if (pfx != null) {
+            local = pfx + ":" + local;
+        }
+        Element element = document.createElementNS(ns, local);
+        element = (Element)DOMUtils.getDomElement(element);
+        return element;
+    }
+
     protected void createAndAddElement(String prefix, String local, String namespace) {
         if (prefix == null) {
             if (namespace == null) {
-                newChild(document.createElementNS(null, local));
+                newChild(createElementNS(null, null, local));
             } else {
-                newChild(document.createElementNS(namespace, local));
+                newChild(createElementNS(namespace, null, local));
             }
         } else {
-            newChild(document.createElementNS(namespace, prefix + ":" + local));
+            newChild(createElementNS(namespace, prefix, local));
         }
     }
 
@@ -169,7 +190,7 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
     }
 
     public void writeEndElement() throws XMLStreamException {
-        if (stack.size() > 0) {
+        if (!stack.isEmpty()) {
             currentNode = stack.pop();
         } else {
             currentNode = null;
@@ -200,7 +221,7 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
         if (prefix.length() > 0) {
             local = prefix + ":" + local;
         }
-        
+
         Attr a = document.createAttributeNS(namespace, local);
         a.setValue(value);
         ((Element)currentNode).setAttributeNodeNS(a);
@@ -233,10 +254,12 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
     }
 
     public void writeComment(String value) throws XMLStreamException {
+        Node nd = document.createComment(value);
+        nd = DOMUtils.getDomElement(nd);
         if (currentNode == null) {
-            document.appendChild(document.createComment(value));
+            document.appendChild(nd);
         } else {
-            currentNode.appendChild(document.createComment(value));
+            currentNode.appendChild(nd);
         }
     }
 
@@ -257,7 +280,7 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
     }
 
     public void writeCData(String data) throws XMLStreamException {
-        currentNode.appendChild(document.createCDATASection(data));
+        currentNode.appendChild(DOMUtils.getDomElement(document.createCDATASection(data)));
     }
 
     public void writeDTD(String arg0) throws XMLStreamException {
@@ -288,7 +311,13 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
     }
 
     public void writeCharacters(String text) throws XMLStreamException {
-        currentNode.appendChild(document.createTextNode(text));
+        Node nd = document.createTextNode(text);
+        nd = DOMUtils.getDomElement(nd);
+        if (currentNode != null) {
+            currentNode.appendChild(nd);
+        } else {
+            document.appendChild(nd);
+        }
     }
 
     public void writeCharacters(char[] text, int start, int len) throws XMLStreamException {
@@ -322,7 +351,7 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
 
     public void flush() throws XMLStreamException {
     }
-    
+
     public String toString() {
         if (document == null) {
             return "<null>";
@@ -332,8 +361,6 @@ public class W3CDOMStreamWriter implements XMLStreamWriter {
         }
         try {
             return StaxUtils.toString(document);
-        } catch (XMLStreamException e) {
-            return super.toString();
         } catch (Throwable t) {
             t.printStackTrace();
             return super.toString();

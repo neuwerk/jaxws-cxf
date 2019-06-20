@@ -398,6 +398,8 @@ public final class JAXBEncoderDecoder {
             writer.flush();
         } catch (Exception e) {
             throw new Fault(new Message("MARSHAL_ERROR", LOG, e.getMessage()), e);
+        } finally {
+            StaxUtils.close(writer);
         }
     }
 
@@ -514,15 +516,15 @@ public final class JAXBEncoderDecoder {
                         m = cls.getMethod("is" + s);
                     }
                     Type type = m.getGenericReturnType();
-                    Method m2 = cls.getMethod("set" + s, m.getReturnType());
+                    Object o = null;
                     if (JAXBSchemaInitializer.isArray(type)) {
                         Class<?> compType = JAXBSchemaInitializer
-                            .getArrayComponentType(type);
+                                        .getArrayComponentType(type);
                         List<Object> ret = unmarshallArray(u, reader,
                                                            q,
                                                            compType,
                                                            createList(type));
-                        Object o = ret;
+                        o = ret;
                         if (!isList(type)) {
                             if (compType.isPrimitive()) {
                                 o = java.lang.reflect.Array.newInstance(compType, ret.size());
@@ -530,14 +532,24 @@ public final class JAXBEncoderDecoder {
                                     Array.set(o, x, ret.get(x));
                                 }
                             } else {
-                                o = ret.toArray((Object[])Array.newInstance(compType, ret.size()));
+                                o = ret.toArray((Object[]) Array.newInstance(compType, ret.size()));
                             }
                         }
+                    } else {
+                        o = getElementValue(u.unmarshal(reader, m.getReturnType()));
+                    }
+
+                    try {
+                        Method m2 = cls.getMethod("set" + s, m.getReturnType());
 
                         m2.invoke(obj, o);
-                    } else {
-                        Object o = getElementValue(u.unmarshal(reader, m.getReturnType()));
-                        m2.invoke(obj, o);
+
+                    } catch (NoSuchMethodException mex) {
+                        Field f = ReflectionUtil.getDeclaredField(cls, q.getLocalPart());
+                        if (f != null) {
+                            ReflectionUtil.setAccessible(f);
+                            f.set(obj, o);
+                        }
                     }
                 }
             }

@@ -94,8 +94,10 @@ public class SoapOutInterceptor extends AbstractSoapInterceptor {
     
     private void writeSoapEnvelopeStart(final SoapMessage message) {
         final SoapVersion soapVersion = message.getVersion();
+        
         try {            
             XMLStreamWriter xtw = message.getContent(XMLStreamWriter.class);
+            
             String soapPrefix = xtw.getPrefix(soapVersion.getNamespace());
             if (StringUtils.isEmpty(soapPrefix)) {
                 soapPrefix = "soap";
@@ -119,10 +121,11 @@ public class SoapOutInterceptor extends AbstractSoapInterceptor {
                 }                
             } else {
                 xtw.setPrefix(soapPrefix, soapVersion.getNamespace());
+
                 xtw.writeStartElement(soapPrefix, 
                                       soapVersion.getEnvelope().getLocalPart(),
                                       soapVersion.getNamespace());
-                String s2 = xtw.getPrefix(soapVersion.getNamespace());
+                String s2 = xtw.getPrefix(soapVersion.getNamespace());           
                 if (StringUtils.isEmpty(s2) || soapPrefix.equals(s2)) {
                     xtw.writeNamespace(soapPrefix, soapVersion.getNamespace());
                 } else {

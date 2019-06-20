@@ -28,6 +28,7 @@ import javax.xml.stream.XMLStreamWriter;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
+import org.apache.cxf.binding.soap.Soap11;
 import org.apache.cxf.binding.soap.SoapFault;
 import org.apache.cxf.binding.soap.SoapMessage;
 import org.apache.cxf.binding.soap.interceptor.Soap11FaultOutInterceptor.Soap11FaultOutInterceptorInternal;
@@ -46,7 +47,7 @@ public class Soap12FaultOutInterceptor extends AbstractSoapInterceptor {
     public void handleMessage(SoapMessage message) throws Fault {
         Fault f = (Fault) message.getContent(Exception.class);
         message.put(org.apache.cxf.message.Message.RESPONSE_CODE, f.getStatusCode());
-        if (message.getVersion().getVersion() == 1.1) {
+        if (message.getVersion() == Soap11.getInstance()) {
             message.getInterceptorChain().add(Soap11FaultOutInterceptorInternal.INSTANCE);
         } else {
             message.getInterceptorChain().add(Soap12FaultOutInterceptorInternal.INSTANCE);
@@ -104,14 +105,20 @@ public class Soap12FaultOutInterceptor extends AbstractSoapInterceptor {
 
                 writer.writeStartElement(defaultPrefix, "Reason", ns);
                 writer.writeStartElement(defaultPrefix, "Text", ns);
-                writer.writeAttribute("xml", "http://www.w3.org/XML/1998/namespace", "lang", getLangCode());
-                if (fault.getMessage() != null) {
-                    writer.writeCharacters(fault.getMessage());
-                } else {
-                    writer.writeCharacters("Fault occurred while processing.");
+                String lang = f.getLang();
+                if (lang == null || lang.equalsIgnoreCase("")) {
+                    lang = getLangCode();
                 }
+                writer.writeAttribute("xml", "http://www.w3.org/XML/1998/namespace", "lang", lang);
+                writer.writeCharacters(getFaultMessage(message, fault));
                 writer.writeEndElement();
                 writer.writeEndElement();
+
+                if (fault.getRole() != null) {
+                    writer.writeStartElement(defaultPrefix, "Role", ns);
+                    writer.writeCharacters(fault.getRole());
+                    writer.writeEndElement();
+                }
 
                 prepareStackTrace(message, fault);
                 
@@ -126,12 +133,6 @@ public class Soap12FaultOutInterceptor extends AbstractSoapInterceptor {
                     }
 
                     // Details
-                    writer.writeEndElement();
-                }
-
-                if (fault.getRole() != null) {
-                    writer.writeStartElement(defaultPrefix, "Role", ns);
-                    writer.writeCharacters(fault.getRole());
                     writer.writeEndElement();
                 }
 

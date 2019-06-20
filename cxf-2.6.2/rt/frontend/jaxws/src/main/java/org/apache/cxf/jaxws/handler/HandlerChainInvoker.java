@@ -249,11 +249,17 @@ public class HandlerChainInvoker {
         }
 
         boolean continueProcessing = true;
+        MessageContext oldCtx = null;
         try {
-            WebServiceContextImpl.setMessageContext(ctx);
+            oldCtx = WebServiceContextImpl.setMessageContext(ctx);
             continueProcessing = invokeHandleMessage(handlerChain, ctx);
         } finally {
-            WebServiceContextImpl.clear();
+            // restore the WebServiceContextImpl's ThreadLocal variable to the previous value
+            if (oldCtx == null) {
+                WebServiceContextImpl.clear();
+            } else {
+                WebServiceContextImpl.setMessageContext(oldCtx);
+            }
         }
 
         return continueProcessing;
@@ -278,8 +284,16 @@ public class HandlerChainInvoker {
 
         //The fault is raised from previous handlers, in this case, we only invoke handleFault
         //if the fault is a ProtocolException
-        if (fault != null && !(fault instanceof ProtocolException)) {
-            return true;
+        if (fault != null) {
+            if (!(fault instanceof ProtocolException)) {
+                return true;
+            } else if (!responseExpected && !messageDirectionReversed) {
+                // According to jsr224 9.3.2.1,
+                // If throw ProtocolException or a subclass:
+                // No response, normal message processing stops, close is called on each previously invoked handler
+                // in the chain, the exception is dispatched (see section 9.1.2.3).
+                return true;
+            }
         }
 
         if (LOG.isLoggable(Level.FINE)) {
@@ -292,11 +306,17 @@ public class HandlerChainInvoker {
         }
 
         boolean continueProcessing = true;
+        MessageContext oldCtx = null;
         try {
-            WebServiceContextImpl.setMessageContext(ctx);
+            oldCtx = WebServiceContextImpl.setMessageContext(ctx);
             continueProcessing = invokeHandleFault(handlerChain, ctx);
         } finally {
-            WebServiceContextImpl.clear();
+            // restore the WebServiceContextImpl's ThreadLocal variable to the previous value
+            if (oldCtx == null) {
+                WebServiceContextImpl.clear();
+            } else {
+                WebServiceContextImpl.setMessageContext(oldCtx);
+            }
         }
 
         return continueProcessing;

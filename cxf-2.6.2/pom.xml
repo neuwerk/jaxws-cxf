@@ -27,7 +27,7 @@
     the development of services using front-end programming APIs, like JAX-WS 
     and JAX-RS.</description>
     <url>http://cxf.apache.org</url>
-    
+
     <packaging>pom</packaging>
 
     <scm>
@@ -232,7 +232,7 @@
                             <configuration>
                                 <source>${cxf.jdk.version}</source>
                                 <target>${cxf.jdk.version}</target>
-                                <maxmem>4096M</maxmem>
+                                <maxmem>256M</maxmem>
                                 <fork>${cxf.compiler.fork}</fork>
                             </configuration>
                         </plugin>
@@ -542,7 +542,7 @@
                     <configuration>
                         <source>1.5</source>
                         <target>1.5</target>
-                        <maxmem>4096M</maxmem>
+                        <maxmem>256M</maxmem>
                         <fork>${cxf.compiler.fork}</fork>
                         <encoding>UTF-8</encoding>
                     </configuration>

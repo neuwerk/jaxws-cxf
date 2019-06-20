@@ -22,11 +22,14 @@ package org.apache.cxf.ws.security.wss4j.policyvalidators;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.xml.namespace.QName;
 
 import org.w3c.dom.Element;
 
+import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.helpers.CastUtils;
 import org.apache.cxf.message.Message;
 import org.apache.cxf.ws.policy.AssertionInfo;
@@ -40,6 +43,7 @@ import org.apache.cxf.ws.security.policy.model.SignatureToken;
 import org.apache.cxf.ws.security.policy.model.SymmetricAsymmetricBindingBase;
 import org.apache.cxf.ws.security.policy.model.Token;
 import org.apache.cxf.ws.security.policy.model.TokenWrapper;
+import org.apache.cxf.ws.security.policy.model.UsernameToken;
 import org.apache.cxf.ws.security.policy.model.X509Token;
 import org.apache.neethi.Assertion;
 import org.apache.ws.security.WSConstants;
@@ -52,7 +56,7 @@ import org.apache.ws.security.util.WSSecurityUtil;
  * Some abstract functionality for validating a security binding.
  */
 public abstract class AbstractBindingPolicyValidator implements BindingPolicyValidator {
-    
+    private static final Logger LOG = LogUtils.getL7dLogger(AbstractBindingPolicyValidator.class);
     private static final QName SIG_QNAME = new QName(WSConstants.SIG_NS, WSConstants.SIG_LN);
     
     /**
@@ -295,10 +299,17 @@ public abstract class AbstractBindingPolicyValidator implements BindingPolicyVal
         List<WSSecurityEngineResult> encryptedResults
     ) {
         Token token = tokenWrapper.getToken();
+        //Policy specifies RequireDerivedKeys, but the message does not have DerivedKeyToken
+        LOG.log(Level.FINE, "checkDerivedKeys, token requires derived keys = "
+                + token.isDerivedKeys() + ", message has derived keys = " + hasDerivedKeys);
         // If derived keys are not required then just return
-        if (!(token instanceof X509Token && token.isDerivedKeys())) {
+        if (!((token instanceof X509Token || token instanceof UsernameToken) 
+            && token.isDerivedKeys())) {
             return true;
         }
+        // derived keys are required but if the message does not have them, 
+        // then check to see whether the encrypted results and/or signed results are
+        // empty
         if (tokenWrapper instanceof EncryptionToken 
             && !hasDerivedKeys && !encryptedResults.isEmpty()) {
             return false;
@@ -306,7 +317,7 @@ public abstract class AbstractBindingPolicyValidator implements BindingPolicyVal
             && !hasDerivedKeys && !signedResults.isEmpty()) {
             return false;
         } else if (tokenWrapper instanceof ProtectionToken
-            && !hasDerivedKeys && !(signedResults.isEmpty() || encryptedResults.isEmpty())) {
+            && !hasDerivedKeys && !(signedResults.isEmpty() && encryptedResults.isEmpty())) {
             return false;
         }
         return true;
@@ -323,7 +334,17 @@ public abstract class AbstractBindingPolicyValidator implements BindingPolicyVal
             if (actInt.intValue() == WSConstants.SIGN && !foundPrimarySignature) {
                 foundPrimarySignature = true;
                 String sigId = (String)result.get(WSSecurityEngineResult.TAG_ID);
-                if (sigId == null || !isIdEncrypted(sigId, results)) {
+                
+                Boolean isSigEncrypted = false;                
+                // Is ID does not exist for the <ds:Signature> elem, check if Signature elem was encrypted, 
+                // do not attempt to match the IDs.
+                if (sigId == null || sigId.length() <= 0) {
+                    isSigEncrypted = isSigElemEncrypted(results);
+                } else {
+                    isSigEncrypted = isIdEncrypted(sigId, results);
+                }
+                
+                if (!isSigEncrypted) {
                     return false;
                 }
             } else if (actInt.intValue() == WSConstants.SC) {
@@ -361,6 +382,34 @@ public abstract class AbstractBindingPolicyValidator implements BindingPolicyVal
         }
         return false;
     }
+    
+    /**
+     * Returns true if the Signature element was encrypted
+     */
+    private boolean isSigElemEncrypted(List<WSSecurityEngineResult> results) {
+
+        for (WSSecurityEngineResult wser : results) {
+            Integer actInt = (Integer)wser.get(WSSecurityEngineResult.TAG_ACTION);
+            if (actInt.intValue() == WSConstants.ENCR) {
+                List<WSDataRef> el = 
+                    CastUtils.cast((List<?>)wser.get(WSSecurityEngineResult.TAG_DATA_REF_URIS));
+                if (el != null) {
+                    for (WSDataRef r : el) {
+                        Element protectedElement = r.getProtectedElement();
+                                                
+                        if (protectedElement != null) {
+                            String elemName = protectedElement.getTagName();
+                            if (elemName.endsWith(":Signature")) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     
     protected void assertPolicy(AssertionInfoMap aim, Assertion token) {
         Collection<AssertionInfo> ais = aim.get(token.getName());

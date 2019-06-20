@@ -27,7 +27,6 @@ import java.util.logging.Logger;
 import javax.activation.DataSource;
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.soap.SOAPException;
 import javax.xml.soap.SOAPMessage;
 import javax.xml.stream.XMLStreamException;
@@ -44,6 +43,8 @@ import org.w3c.dom.DocumentFragment;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
+import com.ibm.wsdl.util.xml.DOMUtils;
+
 import org.apache.cxf.binding.soap.SoapMessage;
 import org.apache.cxf.binding.soap.saaj.SAAJFactoryResolver;
 import org.apache.cxf.binding.soap.saaj.SAAJUtils;
@@ -52,8 +53,10 @@ import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.interceptor.Fault;
 import org.apache.cxf.io.CachedOutputStream;
 import org.apache.cxf.message.Message;
+import org.apache.cxf.message.MessageUtils;
 import org.apache.cxf.message.XMLMessage;
 import org.apache.cxf.staxutils.StaxUtils;
+import org.apache.cxf.staxutils.W3CDOMStreamReader;
 import org.apache.cxf.staxutils.W3CDOMStreamWriter;
 
 
@@ -102,8 +105,6 @@ public class LogicalMessageImpl implements LogicalMessage {
                         StaxUtils.copy(reader, writer);
                         source = new DOMSource(writer.getDocument().getDocumentElement());
                         reader = StaxUtils.createXMLStreamReader(writer.getDocument());
-                    } catch (ParserConfigurationException e) {
-                        throw new Fault(e);
                     } catch (XMLStreamException e) {
                         throw new Fault(e);
                     }
@@ -112,11 +113,9 @@ public class LogicalMessageImpl implements LogicalMessage {
                 message.setContent(Source.class, source);
             } else if (!(source instanceof DOMSource)) {
                 W3CDOMStreamWriter writer;
-                try {
-                    writer = new W3CDOMStreamWriter();
-                } catch (ParserConfigurationException e) {
-                    throw new Fault(e);
-                }
+                
+                writer = new W3CDOMStreamWriter();
+              
                 XMLStreamReader reader = message.getContent(XMLStreamReader.class);
                 if (reader == null) {
                     reader = StaxUtils.createXMLStreamReader(source);
@@ -184,11 +183,29 @@ public class LogicalMessageImpl implements LogicalMessage {
         return source;
     }
 
-    public void setPayload(Source s) {       
+    public void setPayload(Source s) {
         Message message = msgContext.getWrappedMessage();
         Service.Mode mode = (Service.Mode)msgContext.getWrappedMessage()
             .getContextualProperty(Service.Mode.class.getName());
-        if (mode != null) {
+        SOAPMessage m = message.getContent(SOAPMessage.class);
+        if (m != null && !MessageUtils.isOutbound(message)) {
+            try {
+                SAAJUtils.getBody(m).removeContents();
+                W3CDOMStreamWriter writer = new W3CDOMStreamWriter(SAAJUtils.getBody(m));
+                StaxUtils.copy(s, writer);
+                writer.flush();
+                writer.close();
+                if (mode  == Service.Mode.MESSAGE) {
+                    s = new DOMSource(m.getSOAPPart());
+                } else {
+                    s = new DOMSource(SAAJUtils.getBody(m).getFirstChild());
+                }
+                W3CDOMStreamReader r = new W3CDOMStreamReader(DOMUtils.getFirstChildElement(SAAJUtils.getBody(m)));
+                message.setContent(XMLStreamReader.class, r);
+            } catch (Exception e) {
+                throw new Fault(e);
+            }
+        } else if (mode != null) {
             if (message instanceof SoapMessage) {
                 if (mode == Service.Mode.MESSAGE) {
                     try {
@@ -219,6 +236,7 @@ public class LogicalMessageImpl implements LogicalMessage {
             Source s = getPayload();
             if (s instanceof DOMSource) {
                 DOMSource ds = (DOMSource)s;
+                ds.setNode(org.apache.cxf.helpers.DOMUtils.getDomElement(ds.getNode()));
                 Node parent = ds.getNode().getParentNode();
                 Node next = ds.getNode().getNextSibling();
                 if (parent instanceof DocumentFragment) {
@@ -245,8 +263,6 @@ public class LogicalMessageImpl implements LogicalMessage {
             Source source = new DOMSource(writer.getDocument().getDocumentElement());            
             
             setPayload(source);
-        } catch (ParserConfigurationException e) {
-            throw new WebServiceException(e);
         } catch (JAXBException e) {
             throw new WebServiceException(e);
         }

@@ -28,6 +28,7 @@ import java.net.HttpRetryException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.Proxy;
+import java.net.SocketException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.Arrays;
@@ -539,7 +540,6 @@ public class HTTPConduit
                 connection.setChunkedStreamingMode(-1);                    
             }
         }
-
         cookies.writeToMessageHeaders(message);
 
         // The trust decision is relegated to after the "flushing" of the
@@ -854,16 +854,18 @@ public class HTTPConduit
     
     public HTTPClientPolicy getClient(Message message) {
         ClientPolicyCalculator cpc = new ClientPolicyCalculator();
-        HTTPClientPolicy messagePol = message.get(HTTPClientPolicy.class);
-        if (messagePol != null) {
-            return cpc.intersect(messagePol, clientSidePolicy);
+        HTTPClientPolicy pol = message.get(HTTPClientPolicy.class);
+        if (pol != null) {
+            pol = cpc.intersect(pol, clientSidePolicy);
+        } else {
+            pol = clientSidePolicy;
         }
 
         PolicyDataEngine policyDataEngine = bus.getExtension(PolicyDataEngine.class);
         if (policyDataEngine == null) {
-            return clientSidePolicy;
+            return pol;
         }
-        return policyDataEngine.getPolicy(message, clientSidePolicy, cpc);
+        return policyDataEngine.getPolicy(message, pol, cpc);
     }
 
     /**
@@ -1091,15 +1093,7 @@ public class HTTPConduit
             return connection;
         }
         try {
-            //try and consume any content so that the connection might be reusable
-            InputStream ins = connection.getErrorStream();
-            if (ins == null) {
-                ins = connection.getInputStream();
-            }
-            if (ins != null) {
-                IOUtils.consume(ins);
-                ins.close();
-            }
+            closeInputStream(connection);
         } catch (Throwable t) {
             //ignore
         }
@@ -1134,6 +1128,7 @@ public class HTTPConduit
         connection.setReadTimeout((int)cp.getReceiveTimeout());
         connection.setUseCaches(false);
         connection.setInstanceFollowRedirects(false);
+        message.put("http.retransmit.url", newURL.toString());
 
         // If the HTTP_REQUEST_METHOD is not set, the default is "POST".
         String httpRequestMethod = (String)message.get(Message.HTTP_REQUEST_METHOD);
@@ -1337,7 +1332,8 @@ public class HTTPConduit
         @Override
         public void thresholdReached() {
             if (chunking) {
-                connection.setChunkedStreamingMode(-1);
+                connection.setChunkedStreamingMode(
+                    HTTPConduit.this.getClient().getChunkLength());
             }
         }
 
@@ -1402,12 +1398,23 @@ public class HTTPConduit
             
             // If we need to cache for retransmission, store data in a
             // CacheAndWriteOutputStream. Otherwise write directly to the output stream.
+            OutputStream cout = null;
+            try {
+                cout = connection.getOutputStream();
+            } catch (SocketException e) {
+                if ("Socket Closed".equals(e.getMessage())) {
+                    connection.connect();
+                    cout = connection.getOutputStream();
+                } else {
+                    throw e;
+                }
+            }
             if (cachingForRetransmission) {
                 cachedStream =
-                    new CacheAndWriteOutputStream(connection.getOutputStream());
+                    new CacheAndWriteOutputStream(cout);
                 wrappedStream = cachedStream;
             } else {
-                wrappedStream = connection.getOutputStream();
+                wrappedStream = cout;
             }
             
         }
@@ -1485,12 +1492,13 @@ public class HTTPConduit
                 || ("GET".equals(connection.getRequestMethod()) && getClient().isAutoRedirect())) {
 
                 if (LOG.isLoggable(Level.FINE) && cachedStream != null) {
-                    LOG.fine("Conduit \""
-                             + getConduitName() 
-                             + "\" Transmit cached message to: " 
-                             + connection.getURL()
-                             + ": "
-                             + new String(cachedStream.getBytes()));
+                    StringBuilder b = new StringBuilder(4096);
+                    b.append("Conduit \"").append(getConduitName())
+                        .append("\" Transmit cached message to: ")
+                        .append(connection.getURL())
+                        .append(": ");
+                    cachedStream.writeCacheTo(b, 16 * 1024);
+                    LOG.fine(b.toString());
                 }
 
 
@@ -1535,8 +1543,8 @@ public class HTTPConduit
                             handleResponseInternal();
                         } catch (Exception e) {
                             ((PhaseInterceptorChain)outMessage.getInterceptorChain()).abort();
-                            ((PhaseInterceptorChain)outMessage.getInterceptorChain()).unwind(outMessage);
                             outMessage.setContent(Exception.class, e);
+                            ((PhaseInterceptorChain)outMessage.getInterceptorChain()).unwind(outMessage);
                             outMessage.getInterceptorChain().getFaultObserver().onMessage(outMessage);
                         }
                     }
@@ -1596,7 +1604,7 @@ public class HTTPConduit
                 return true;
             }
             // 2. Context property
-            return MessageUtils.getContextualBoolean(message, Message.PROCESS_ONEWAY_REPONSE, false);
+            return MessageUtils.getContextualBoolean(message, Message.PROCESS_ONEWAY_RESPONSE, false);
         }
 
         protected void handleResponseInternal() throws IOException {
@@ -1621,6 +1629,11 @@ public class HTTPConduit
             }
 
             InputStream in = null;
+            Message inMessage = new MessageImpl();
+            inMessage.setExchange(exchange);
+            new Headers(inMessage).readFromConnection(connection);
+            inMessage.put(Message.RESPONSE_CODE, responseCode);
+            cookies.readFromConnection(connection);
             // oneway or decoupled twoway calls may expect HTTP 202 with no content
             if (isOneway(exchange) 
                 || HttpURLConnection.HTTP_ACCEPTED == responseCode) {
@@ -1628,7 +1641,10 @@ public class HTTPConduit
                 if ((in == null) || (!doProcessResponse(outMessage))) {
                     // oneway operation or decoupled MEP without 
                     // partial response
-                    connection.getInputStream().close();
+                    closeInputStream(connection);
+                    if (isOneway(exchange) && responseCode > 300) {
+                        throw new HTTPException(responseCode, connection.getResponseMessage(), connection.getURL());
+                    }
                     ClientCallback cc = exchange.get(ClientCallback.class);
                     if (null != cc) {
                         //REVISIT move the decoupled destination property name into api
@@ -1653,10 +1669,6 @@ public class HTTPConduit
                 cachedStream = null;
             }
             
-            Message inMessage = new MessageImpl();
-            inMessage.setExchange(exchange);
-            new Headers(inMessage).readFromConnection(connection);
-            inMessage.put(Message.RESPONSE_CODE, responseCode);
             String ct = connection.getContentType();
             inMessage.put(Message.CONTENT_TYPE, ct);
             String charset = HttpHeaderHelper.findCharset(ct);
@@ -1668,7 +1680,6 @@ public class HTTPConduit
                 throw new IOException(m);   
             } 
             inMessage.put(Message.ENCODING, normalizedEncoding);
-            cookies.readFromConnection(connection);
             if (in == null) {
                 if (responseCode >= HttpURLConnection.HTTP_BAD_REQUEST) {
                     in = connection.getErrorStream();
@@ -1762,6 +1773,18 @@ public class HTTPConduit
         policyDataEngine.assertMessage(message, getClient(), new ClientPolicyCalculator());
     }
     
+    protected void closeInputStream(HttpURLConnection connection) throws IOException {
+        //try and consume any content so that the connection might be reusable
+        InputStream ins = connection.getErrorStream();
+        if (ins == null) {
+            ins = connection.getInputStream();
+        }
+        if (ins != null) {
+            IOUtils.consume(ins);
+            ins.close();
+        }
+    }
+
     public boolean canAssert(QName type) {
         return new ClientPolicyCalculator().equals(type);  
     }

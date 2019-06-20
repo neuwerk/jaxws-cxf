@@ -57,6 +57,8 @@ public class EHCacheReplayCache implements ReplayCache, Closeable, BusLifeCycleL
 
         Ehcache newCache = new Cache(cc);
         cache = cacheManager.addCacheIfAbsent(newCache);
+        // Set the TimeToLive value from the CacheConfiguration
+        ttl = cc.getTimeToLiveSeconds();
     }
     
     /**
@@ -65,8 +67,8 @@ public class EHCacheReplayCache implements ReplayCache, Closeable, BusLifeCycleL
      */
     public void setTTL(long newTtl) {
         ttl = newTtl;
-    }
-    
+    }    
+       
     /**
      * Get the (default) TTL value in seconds
      * @return the (default) TTL value in seconds

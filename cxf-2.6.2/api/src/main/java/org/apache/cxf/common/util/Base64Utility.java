@@ -358,4 +358,7 @@ public final class Base64Utility {
         } 
     } 
 
+    public static boolean isValidBase64(int ch) {
+        return ch == PAD || BDT[ch] != Byte.MAX_VALUE;
+    }
 }

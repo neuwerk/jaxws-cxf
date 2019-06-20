@@ -44,11 +44,12 @@ public class Fault extends UncheckedException {
     private Element detail;
     private String message;
     private QName code;
+    private String lang;
     /**
      * response http header status code
      */
     private int statusCode = DEFAULT_HTTP_RESPONSE_CODE;
-    
+
     public Fault(Message message, Throwable throwable) {
         super(message, throwable);
         this.message = message.toString();
@@ -85,7 +86,7 @@ public class Fault extends UncheckedException {
         if (super.getMessage() != null) {
             message = super.getMessage();
         } else {
-            message = t == null ? null : t.getMessage();
+            message = getMessage(t);
         }
         code = FAULT_CODE_SERVER;
     }
@@ -107,7 +108,7 @@ public class Fault extends UncheckedException {
         if (super.getMessage() != null) {
             message = super.getMessage();
         } else {
-            message = t == null ? null : t.getMessage();
+            message = getMessage(t);
         }
         code = fc;
     }    
@@ -184,5 +185,22 @@ public class Fault extends UncheckedException {
      */
     public void setStatusCode(int statusCode) {
         this.statusCode = statusCode;
+    }
+
+    /**
+     * Extracts the effective message value from the specified exception object
+     * @param t
+     * @return
+     */
+    private static String getMessage(Throwable t) {
+        return t == null ? null : t.getMessage() != null ? t.getMessage() : t.toString();
+    }
+
+    public void setLang(String convertedLang) {
+        lang = convertedLang;
+    }
+
+    public String getLang() {
+        return lang;
     }
 }

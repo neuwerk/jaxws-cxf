@@ -100,6 +100,13 @@ public class AlgorithmSuite extends AbstractSecurityAssertion {
     }
 
     /**
+     * @param method The asymmetricSignature to set.
+     */
+    public void setAsymmetricSignature(String method) {
+        asymmetricSignature = method;
+    }
+
+    /**
      * @return Returns the computedKey.
      */
     public String getComputedKey() {
@@ -174,6 +181,13 @@ public class AlgorithmSuite extends AbstractSecurityAssertion {
      */
     public String getSymmetricSignature() {
         return symmetricSignature;
+    }
+
+    /**
+     * @param method The symmetricSignature to set.
+     */
+    public void setSymmetricSignature(String method) {
+        symmetricSignature = method;
     }
 
     /**

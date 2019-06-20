@@ -55,6 +55,7 @@ import org.apache.cxf.ws.policy.PolicyException;
 import org.apache.cxf.ws.security.SecurityConstants;
 import org.apache.cxf.ws.security.policy.SP12Constants;
 import org.apache.cxf.ws.security.policy.SPConstants;
+import org.apache.cxf.ws.security.policy.model.SupportingToken;
 import org.apache.cxf.ws.security.policy.model.UsernameToken;
 import org.apache.ws.security.WSConstants;
 import org.apache.ws.security.WSDocInfo;
@@ -63,6 +64,7 @@ import org.apache.ws.security.WSSConfig;
 import org.apache.ws.security.WSSecurityEngineResult;
 import org.apache.ws.security.WSSecurityException;
 import org.apache.ws.security.WSUsernameTokenPrincipal;
+import org.apache.ws.security.cache.ReplayCache;
 import org.apache.ws.security.handler.RequestData;
 import org.apache.ws.security.handler.WSHandlerConstants;
 import org.apache.ws.security.handler.WSHandlerResult;
@@ -170,6 +172,7 @@ public class UsernameTokenInterceptor extends AbstractSoapInterceptor {
     protected WSUsernameTokenPrincipal getPrincipal(Element tokenElement, final SoapMessage message)
         throws WSSecurityException {
         
+        boolean bspCompliant = isWsiBSPCompliant(message);
         boolean utWithCallbacks = 
             MessageUtils.getContextualBoolean(message, SecurityConstants.VALIDATE_TOKEN, true);
         if (utWithCallbacks) {
@@ -188,21 +191,31 @@ public class UsernameTokenInterceptor extends AbstractSoapInterceptor {
                     return (Validator)validator;
                 }
             };
-            data.setWssConfig(WSSConfig.getNewInstance());
+            
+            // Configure replay caching
+            ReplayCache nonceCache = 
+                WSS4JUtils.getReplayCache(
+                    message, SecurityConstants.ENABLE_NONCE_CACHE, SecurityConstants.NONCE_CACHE_INSTANCE
+                );
+            data.setNonceReplayCache(nonceCache);
+            
+            WSSConfig config = WSSConfig.getNewInstance();
+            config.setWsiBSPCompliant(bspCompliant);
+            data.setWssConfig(config);
             List<WSSecurityEngineResult> results = 
                 p.handleToken(tokenElement, data, wsDocInfo);
             return (WSUsernameTokenPrincipal)results.get(0).get(WSSecurityEngineResult.TAG_PRINCIPAL);
         } else {
-            WSUsernameTokenPrincipal principal = parseTokenAndCreatePrincipal(tokenElement);
+            WSUsernameTokenPrincipal principal = parseTokenAndCreatePrincipal(tokenElement, bspCompliant);
             WSS4JTokenConverter.convertToken(message, principal);
             return principal;
         }
     }
     
-    protected WSUsernameTokenPrincipal parseTokenAndCreatePrincipal(Element tokenElement) 
+    protected WSUsernameTokenPrincipal parseTokenAndCreatePrincipal(Element tokenElement, boolean bspCompliant) 
         throws WSSecurityException {
         org.apache.ws.security.message.token.UsernameToken ut = 
-            new org.apache.ws.security.message.token.UsernameToken(tokenElement);
+            new org.apache.ws.security.message.token.UsernameToken(tokenElement, false, bspCompliant);
         
         WSUsernameTokenPrincipal principal = new WSUsernameTokenPrincipal(ut.getName(), ut.isHashed());
         principal.setNonce(ut.getNonce());
@@ -211,6 +224,13 @@ public class UsernameTokenInterceptor extends AbstractSoapInterceptor {
         principal.setPasswordType(ut.getPasswordType());
 
         return principal;
+    }
+    
+
+    protected boolean isWsiBSPCompliant(final SoapMessage message) {
+        String bspc = (String)message.getContextualProperty(SecurityConstants.IS_BSP_COMPLIANT);
+        // Default to WSI-BSP compliance enabled
+        return !("false".equals(bspc) || "0".equals(bspc));
     }
     
     protected SecurityContext createSecurityContext(final Principal p, Subject subject) {
@@ -245,8 +265,11 @@ public class UsernameTokenInterceptor extends AbstractSoapInterceptor {
             tok = (UsernameToken)ai.getAssertion();
             if (princ != null && tok.isHashPassword() != princ.isPasswordDigest()) {
                 ai.setNotAsserted("Password hashing policy not enforced");
+            } else if (princ != null && !tok.isNoPassword() && (princ.getPassword() == null)
+                && isNonEndorsingSupportingToken(tok)) {
+                ai.setNotAsserted("Username Token No Password supplied");
             } else {
-                ai.setAsserted(true);                
+                ai.setAsserted(true);         
             }
         }
         ais = aim.getAssertionInfo(SP12Constants.SUPPORTING_TOKENS);
@@ -258,6 +281,26 @@ public class UsernameTokenInterceptor extends AbstractSoapInterceptor {
             ai.setAsserted(true);
         }
         return tok;
+    }
+    
+    /**
+     * Return true if this UsernameToken policy is a (non-endorsing)SupportingToken. If this is
+     * true then the corresponding UsernameToken must have a password element.
+     */
+    private boolean isNonEndorsingSupportingToken(
+        org.apache.cxf.ws.security.policy.model.UsernameToken usernameTokenPolicy
+    ) {
+        SupportingToken supportingToken = usernameTokenPolicy.getSupportingToken();
+        if (supportingToken != null) {
+            SPConstants.SupportTokenType type = supportingToken.getTokenType();
+            if (type == SPConstants.SupportTokenType.SUPPORTING_TOKEN_SUPPORTING
+                || type == SPConstants.SupportTokenType.SUPPORTING_TOKEN_SIGNED
+                || type == SPConstants.SupportTokenType.SUPPORTING_TOKEN_SIGNED_ENCRYPTED
+                || type == SPConstants.SupportTokenType.SUPPORTING_TOKEN_ENCRYPTED) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void addUsernameToken(SoapMessage message) {

@@ -21,6 +21,8 @@ package org.apache.cxf.wsdl11;
 
 import java.io.IOException;
 import java.net.URL;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -43,6 +45,7 @@ import javax.wsdl.factory.WSDLFactory;
 import javax.wsdl.xml.WSDLReader;
 import javax.xml.bind.JAXBException;
 import javax.xml.namespace.QName;
+import javax.xml.stream.XMLStreamReader;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -227,8 +230,10 @@ public class WSDLManagerImpl implements WSDLManager {
         Definition def = null;
         if (src.getByteStream() != null || src.getCharacterStream() != null) {
             Document doc;
+            XMLStreamReader xmlReader = null;
             try {
-                doc = StaxUtils.read(StaxUtils.createXMLStreamReader(src), true);
+                xmlReader = StaxUtils.createXMLStreamReader(src);
+                doc = StaxUtils.read(xmlReader, true);
                 if (src.getSystemId() != null) {
                     try {
                         doc.setDocumentURI(new String(src.getSystemId()));
@@ -238,6 +243,8 @@ public class WSDLManagerImpl implements WSDLManager {
                 }
             } catch (Exception e) {
                 throw new WSDLException(WSDLException.PARSER_ERROR, e.getMessage(), e);
+            } finally {
+                StaxUtils.close(xmlReader);
             }
             def = reader.readWSDL(wsdlLocator, doc.getDocumentElement());
         } else {
@@ -254,11 +261,26 @@ public class WSDLManagerImpl implements WSDLManager {
         registerInitialXmlExtensions(EXTENSIONS_RESOURCE_COMPAT);
         registerInitialXmlExtensions(EXTENSIONS_RESOURCE);
     }
+    
     private void registerInitialXmlExtensions(String resource) throws BusException {
         Properties initialExtensions = null;
         try {
-            initialExtensions = PropertiesLoaderUtils.loadAllProperties(resource, 
-                  this.getClass().getClassLoader());
+            ClassLoader cl = null;
+            if (bus != null) {
+                cl = bus.getExtension(ClassLoader.class);
+            }
+            if (cl != null) {
+                initialExtensions = PropertiesLoaderUtils.loadAllProperties(resource, cl);
+            }
+            //use TCCL as fallback so that can load resources from other bundles in OSGi
+            if (initialExtensions == null || initialExtensions.size() == 0) {
+                ClassLoader pcl = AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
+                    public ClassLoader run() {
+                        return Thread.currentThread().getContextClassLoader();
+                    }
+                });
+                initialExtensions = PropertiesLoaderUtils.loadAllProperties(resource, pcl);
+            }
         } catch (IOException ex) {
             throw new BusException(ex);
         }

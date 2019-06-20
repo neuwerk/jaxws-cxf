@@ -30,6 +30,9 @@ import java.util.ResourceBundle;
 import javax.xml.namespace.QName;
 import javax.xml.soap.AttachmentPart;
 import javax.xml.soap.MessageFactory;
+import javax.xml.soap.SOAPBody;
+import javax.xml.soap.SOAPElement;
+import javax.xml.soap.SOAPEnvelope;
 import javax.xml.soap.SOAPException;
 import javax.xml.soap.SOAPHeader;
 import javax.xml.soap.SOAPMessage;
@@ -37,6 +40,9 @@ import javax.xml.soap.SOAPPart;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.events.Attribute;
+import javax.xml.stream.events.Namespace;
+import javax.xml.stream.events.XMLEvent;
 import javax.xml.transform.dom.DOMSource;
 
 import org.w3c.dom.Document;
@@ -54,6 +60,7 @@ import org.apache.cxf.binding.soap.interceptor.AbstractSoapInterceptor;
 import org.apache.cxf.binding.soap.interceptor.ReadHeadersInterceptor;
 import org.apache.cxf.common.i18n.BundleUtils;
 import org.apache.cxf.common.injection.NoJSR250Annotations;
+import org.apache.cxf.common.util.StringUtils;
 import org.apache.cxf.databinding.DataBinding;
 import org.apache.cxf.headers.Header;
 import org.apache.cxf.headers.HeaderManager;
@@ -157,7 +164,6 @@ public class SAAJInInterceptor extends AbstractSoapInterceptor {
     }
     
     
-    
     public void handleMessage(SoapMessage message) throws Fault {
         if (isGET(message)) {
             return;
@@ -176,19 +182,19 @@ public class SAAJInInterceptor extends AbstractSoapInterceptor {
                 message.setContent(SOAPMessage.class, soapMessage);
             }
             XMLStreamReader xmlReader = message.getContent(XMLStreamReader.class);
-            if (xmlReader == null) {
-                return;
-            }
             final SOAPPart part = soapMessage.getSOAPPart();
             Document node = (Document) message.getContent(Node.class);
-            if (node != part) {
-                if (node == null) {
-                    // replicate 2.1 behavior.
-                    part.setContent(new DOMSource(null));
-                } else {
-                    //part.setContent(new DOMSource(node));
-                    StaxUtils.copy(node, new SAAJStreamWriter(part));
-                }
+            if (node != part && node != null) {
+                StaxUtils.copy(node, new SAAJStreamWriter(part));
+            } else {
+                SOAPEnvelope env = soapMessage.getSOAPPart().getEnvelope();
+                @SuppressWarnings("unchecked")
+                List<XMLEvent> envEvents = (List<XMLEvent>)message.get(ReadHeadersInterceptor.ENVELOPE_EVENTS);
+                applyEvents(envEvents, env);
+                SOAPBody body = soapMessage.getSOAPBody();
+                @SuppressWarnings("unchecked")
+                List<XMLEvent> bodyEvents = (List<XMLEvent>)message.get(ReadHeadersInterceptor.BODY_EVENTS);
+                applyEvents(bodyEvents, body);
             }
             message.setContent(Node.class, soapMessage.getSOAPPart());
 
@@ -203,12 +209,14 @@ public class SAAJInInterceptor extends AbstractSoapInterceptor {
                         }
                     }
                     AttachmentPart ap = soapMessage.createAttachmentPart(a.getDataHandler());
-                    ap.setContentId(a.getId());
                     Iterator<String> i = a.getHeaderNames();
                     while (i != null && i.hasNext()) {
                         String h = i.next();
                         String val = a.getHeader(h);
                         ap.addMimeHeader(h, val);
+                    }
+                    if (StringUtils.isEmpty(ap.getContentId())) {
+                        ap.setContentId(a.getId());
                     }
                     soapMessage.addAttachmentPart(ap);
                 }
@@ -238,6 +246,18 @@ public class SAAJInInterceptor extends AbstractSoapInterceptor {
             throw new SoapFault(new org.apache.cxf.common.i18n.Message(
                     "SOAPHANDLERINTERCEPTOR_EXCEPTION", BUNDLE), e, message
                     .getVersion().getSender());
+        }
+    }
+    
+    private static void applyEvents(List<XMLEvent> events, SOAPElement el) throws SOAPException {
+        if (events != null) {
+            for (XMLEvent ev : events) {
+                if (ev.isNamespace()) {
+                    el.addNamespaceDeclaration(((Namespace)ev).getPrefix(), ((Namespace)ev).getNamespaceURI());
+                } else if (ev.isAttribute()) {
+                    el.addAttribute(((Attribute)ev).getName(), ((Attribute)ev).getValue());
+                }
+            }
         }
     }
 

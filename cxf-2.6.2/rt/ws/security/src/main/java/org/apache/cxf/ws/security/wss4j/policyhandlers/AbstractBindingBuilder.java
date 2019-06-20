@@ -36,7 +36,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
 import javax.security.auth.callback.CallbackHandler;
 import javax.xml.crypto.dsig.Reference;
 import javax.xml.namespace.QName;
@@ -52,6 +51,7 @@ import org.w3c.dom.Attr;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
+
 
 import org.apache.cxf.Bus;
 import org.apache.cxf.binding.soap.SoapMessage;
@@ -137,8 +137,13 @@ import org.opensaml.common.SAMLVersion;
  * 
  */
 public abstract class AbstractBindingBuilder {
+
+    
+    
     public static final String CRYPTO_CACHE = "ws-security.crypto.cache";
+
     protected static final Logger LOG = LogUtils.getL7dLogger(AbstractBindingBuilder.class);
+
     
     protected SPConstants.ProtectionOrder protectionOrder = 
         SPConstants.ProtectionOrder.SignBeforeEncrypting;
@@ -168,7 +173,7 @@ public abstract class AbstractBindingBuilder {
     Element bottomUpElement;
     Element topDownElement;
     Element bstElement;
-    
+
     public AbstractBindingBuilder(
                            WSSConfig config,
                            Binding binding,
@@ -186,9 +191,15 @@ public abstract class AbstractBindingBuilder {
     }
     
     private void insertAfter(Element child, Element sib) {
+        child = (Element)DOMUtils.getDomElement(child);
+        sib = (Element)DOMUtils.getDomElement(sib);
+        LOG.info("insertAfter:  child = " + child + " sib = " + topDownElement);
         if (sib.getNextSibling() == null) {
+            LOG.info("insertAfter:  secHeader.getSecurityHeader() = " + secHeader.getSecurityHeader());
             secHeader.getSecurityHeader().appendChild(child);
         } else {
+            LOG.info("insertAfter:  secHeader.getSecurityHeader() = " + secHeader.getSecurityHeader());
+            LOG.info("insertAfter: child = " + child + " sib.getNextSibling() = " + sib.getNextSibling());
             secHeader.getSecurityHeader().insertBefore(child, sib.getNextSibling());
         }
     }
@@ -201,10 +212,12 @@ public abstract class AbstractBindingBuilder {
         } else if (topDownElement != null) {
             insertAfter(el, topDownElement);
         } else if (secHeader.getSecurityHeader().getFirstChild() != null) {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().insertBefore(
                 el, secHeader.getSecurityHeader().getFirstChild()
             );
         } else {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().appendChild(el);
         }
         lastEncryptedKeyElement = el;
@@ -214,37 +227,47 @@ public abstract class AbstractBindingBuilder {
         if (lastEncryptedKeyElement != null) {
             insertAfter(el, lastEncryptedKeyElement);
         } else if (lastDerivedKeyElement != null) {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().insertBefore(el, lastDerivedKeyElement);
         } else if (topDownElement != null) {
+            //el = (Element)getDomElement(el);
+            LOG.info("element = " + el + " topDownElement = " + topDownElement);
             insertAfter(el, topDownElement);
         } else if (secHeader.getSecurityHeader().getFirstChild() != null) {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().insertBefore(
                 el, secHeader.getSecurityHeader().getFirstChild()
             );
         } else {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().appendChild(el);
         }
         lastEncryptedKeyElement = el;
     }
     
     protected void addSupportingElement(Element el) {
+        el = (Element)DOMUtils.getDomElement(el);
         if (lastSupportingTokenElement != null) {
             insertAfter(el, lastSupportingTokenElement);
         } else if (lastDerivedKeyElement != null) {
             insertAfter(el, lastDerivedKeyElement);
         } else if (lastEncryptedKeyElement != null) {
+            LOG.info("element = " + el + " topDownElement = " + topDownElement);
             insertAfter(el, lastEncryptedKeyElement);
         } else if (topDownElement != null) {
             insertAfter(el, topDownElement);
         } else if (bottomUpElement != null) {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().insertBefore(el, bottomUpElement);
         } else {
+            el = (Element)DOMUtils.getDomElement(el);
             secHeader.getSecurityHeader().appendChild(el);
         }
         lastSupportingTokenElement = el;
     }
     
     protected void insertBeforeBottomUp(Element el) {
+        el = (Element)DOMUtils.getDomElement(el);
         if (bottomUpElement == null) {
             secHeader.getSecurityHeader().appendChild(el);
         } else {
@@ -254,6 +277,7 @@ public abstract class AbstractBindingBuilder {
     }
     
     protected void addTopDownElement(Element el) {
+        el = (Element)DOMUtils.getDomElement(el);
         if (topDownElement == null) {
             if (secHeader.getSecurityHeader().getFirstChild() == null) {
                 secHeader.getSecurityHeader().appendChild(el);
@@ -418,6 +442,7 @@ public abstract class AbstractBindingBuilder {
                     } else {
                         ai.setAsserted(true);
                         Element el = timestamp.getElement();
+                        el = (Element)DOMUtils.getDomElement(el);
                         secHeader.getSecurityHeader().appendChild(el);
                         if (bottomUpElement == null) {
                             bottomUpElement = el;
@@ -693,10 +718,11 @@ public abstract class AbstractBindingBuilder {
                     // TODO We only support using a KeyIdentifier for the moment
                     SecurityTokenReference secRef = 
                         createSTRForSamlAssertion(doc, assertionWrapper.getId(), saml1, false);
-                    addSupportingElement(secRef.getElement());
+                    Element clone = cloneElement(secRef.getElement()); // newly added
+                    addSupportingElement(clone);
                     part = new WSEncryptionPart("STRTransform", null, "Element");
                     part.setId(secRef.getID());
-                    part.setElement(secRef.getElement());
+                    part.setElement(clone);
                 }
             } else if (tempTok instanceof WSSecurityTokenHolder) {
                 SecurityToken token = ((WSSecurityTokenHolder)tempTok).getToken();
@@ -2202,7 +2228,7 @@ public abstract class AbstractBindingBuilder {
         }
     }
     
-    /**
+     /**
      * Processes the parts to be signed and reconfigures those parts that have
      * already been encrypted.
      * 
@@ -2283,6 +2309,5 @@ public abstract class AbstractBindingBuilder {
         }
         return false;
     }
-    
     
 }

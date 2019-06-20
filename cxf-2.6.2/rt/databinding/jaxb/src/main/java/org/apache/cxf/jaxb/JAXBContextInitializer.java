@@ -350,7 +350,8 @@ class JAXBContextInitializer extends ServiceModelVisitor {
      */
     static boolean isFieldAccepted(Field field, XmlAccessType accessType) {
         // We only accept non static fields which are not marked @XmlTransient
-        if (Modifier.isStatic(field.getModifiers()) || field.isAnnotationPresent(XmlTransient.class)) {
+        if (Modifier.isStatic(field.getModifiers()) || field.isAnnotationPresent(XmlTransient.class)
+            || Modifier.isTransient(field.getModifiers())) {
             return false;
         }
         if (accessType == XmlAccessType.PUBLIC_MEMBER 
@@ -375,14 +376,16 @@ class JAXBContextInitializer extends ServiceModelVisitor {
         // We only accept non static property getters which are not marked @XmlTransient
         if (Modifier.isStatic(method.getModifiers()) 
             || method.isAnnotationPresent(XmlTransient.class)
-            || !Modifier.isPublic(method.getModifiers())) {
+                || !Modifier.isPublic(method.getModifiers())
+                || "getClass".equals(method.getName())) {
             return false;
         }
 
         // must not have parameters and return type must not be void
         if (method.getReturnType() == Void.class 
             || method.getParameterTypes().length != 0
-            || method.getDeclaringClass().equals(Throwable.class)) {
+            || (method.getDeclaringClass().equals(Throwable.class)
+            && !("getMessage".equals(method.getName())))) {
             return false;
         }
 
@@ -404,12 +407,12 @@ class JAXBContextInitializer extends ServiceModelVisitor {
         } catch (Exception e) {
             //getter, but no setter
         }
-        if (setter == null 
-            || setter.isAnnotationPresent(XmlTransient.class)
-            || !Modifier.isPublic(setter.getModifiers())) {
+        if ((setter != null) 
+                && ((setter.isAnnotationPresent(XmlTransient.class)
+                || !Modifier.isPublic(setter.getModifiers())))) {
             return false;
+             
         }
-
         if (accessType == XmlAccessType.NONE
             || accessType == XmlAccessType.FIELD) {
             return checkJaxbAnnotation(method.getAnnotations());
@@ -420,6 +423,7 @@ class JAXBContextInitializer extends ServiceModelVisitor {
 
     /**
      * Checks if there are JAXB annotations among the annotations of the class member.
+     * 
      * @param annotations the array of annotations from the class member
      * @return true if JAXB annotations are present, false otherwise
      */

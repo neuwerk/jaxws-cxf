@@ -26,11 +26,57 @@ import java.util.StringTokenizer;
 
 import javax.xml.namespace.QName;
 
+import org.apache.cxf.annotations.SchemaValidation.SchemaValidationType;
+import org.apache.cxf.message.Message;
+
 public final class ServiceUtils {
     
     private ServiceUtils() {
     }
-
+    
+    /**
+     * A short cut method to be able to test for if Schema Validation should be enabled
+     * for IN or OUT without having to check BOTH and IN or OUT.
+     * 
+     * @param message
+     * @param type
+     */
+    public static boolean isSchemaValidationEnabled(SchemaValidationType type, Message message) {
+        SchemaValidationType messageType = getSchemaValidationType(message);
+        
+        return messageType.equals(type) 
+            || ((SchemaValidationType.IN.equals(type) || SchemaValidationType.OUT.equals(type))
+                && SchemaValidationType.BOTH.equals(messageType));
+    }
+    
+    /**
+     * Determines the appropriate SchemaValidationType to return based on either
+     * a Boolean (for backwards compatibility) or the selected Schema Validation Type.
+     * 
+     * Package private as the isSchemaValidationEnabled method should be used instead.  Only
+     * visible for easier testing
+     * 
+     * @param message
+     */
+    static SchemaValidationType getSchemaValidationType(Message message) {
+        Object obj = message.getContextualProperty(Message.SCHEMA_VALIDATION_ENABLED);
+        if (obj instanceof SchemaValidationType) {
+            return (SchemaValidationType)obj;
+        } else if (obj != null) { 
+            String value = obj.toString().toUpperCase(); // handle boolean values as well
+            if ("TRUE".equals(value)) {
+                return SchemaValidationType.BOTH;
+            } else if ("FALSE".equals(value)) {
+                return SchemaValidationType.NONE;
+            } else if (value.length() > 0) {
+                return SchemaValidationType.valueOf(value);
+            }
+        }
+        
+        // fall through default value
+        return SchemaValidationType.NONE;
+    }
+    
     /**
      * Generates a suitable service name from a given class. The returned name
      * is the simple name of the class, i.e. without the package name.
@@ -127,7 +173,6 @@ public final class ServiceUtils {
      * Method makePackageName
      * 
      * @param namespace
-     * @return
      */
     public static String makePackageName(String namespace) {
 

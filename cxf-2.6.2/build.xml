@@ -1,19 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project name="cxf-2.6.2" default="build" xmlns:mvn="antlib:org.apache.maven.artifact.ant">
   <taskdef uri="antlib:org.apache.maven.artifact.ant" resource="org/apache/maven/artifact/ant/antlib.xml" 
-           classpath="../apache.aries.prereqs/maven-ant/lib/maven-ant-tasks-2.1.0.jar" />
+           classpath="../mirror.maker.prereqs/maven-ant/lib/maven-ant-tasks-2.1.0.jar" />
 
-  <import file="../apache.aries.build/imports/upload.xml"/>
-  <import file="../apache.aries.build/imports/standard_tasks.xml"/>
+  <import file="../mirror.maker.build/imports/upload.xml"/>
+  <import file="../mirror.maker.build/imports/standard_tasks.xml"/>
 
   <property name="file.local.dir" value="target"/>
   <property name="file.to.upload" value="apache-cxf-ibm-${buildLabel}.zip"/>
-  <property name="file.label" value="${opensource.project.name} Binary"/>
-
+  <property name="file.label" value="${opensource.project.name} Binary"/> 
+	
+  <!-- set the default values for these properties -->
+  <property name="version.search" value="-SNAPSHOT" />
+  <property name="version.replace.prefix" value="-ibm" />
+  <property name="version.replace.string" value="${version.replace.prefix}-${buildLabel}" />
+  <property name="cxf.version.num" value="2.6.2" />
+  <property name="maven.goals" value="clean install" />
+	
   <!-- Determine whether we should be using external repositories or just build against the local repo -->
-  <condition property="maven.online.mode">
-    <istrue value="${download.dependencies}" />
+  <condition property="maven.offline.flag" value="-o" else="">
+    <not>
+  	  <equals arg1="${process.mode}" arg2="development" />
+    </not>
   </condition>
+	
+  <echoproperties/>
+  <!-- Set up the flag to pass to mvn:mvn to ensure up to date snapshots are downloaded if required -->
+  <condition property="maven.update.snapshots.flag" value="-U" else="">
+    <istrue value="${maven.update.snapshots}" />
+  </condition>
+
+  <!-- Set up the skipTests flag if required -->
+  <property name="skipTests" value="false" />
 
   <target name="build" depends="notifyStart, init, updateVersion, runBuild, updateRepository, package, upload, copySource, failIfFail"/>
 
@@ -34,15 +52,12 @@
   </target>
 
   <target name="init">
-    <!-- in case it is somehow not there -->
-    <mkdir dir="${maven.repo}" />
-
     <!-- Clean out our local maven repository since it's not in our extracted tree -->
-    <delete>
-      <fileset dir="${maven.repo}">
-        <include name="**/*" />
-      </fileset>
+    <delete failonerror="false">
+      <fileset dir="${maven.repo}" />
     </delete>
+
+  	<mkdir dir="${maven.repo}" />
 
     <!-- Now copy over what we have extracted. Note we are not using that directly because
          there have been issues with PaxURL when doing that -->
@@ -57,19 +72,13 @@
   <target name="updateRepository">
     <move todir="../repository">
       <fileset dir="${maven.repo}">
-        <include name="**" />
+        <exclude name="**/*${version.replace.string}/**" />
+      	<exclude name="**/resolver-status.properties" />
+        <exclude name="**/maven-metadata-local.xml" />
       </fileset>
     </move>
-
-    <!-- But make sure that we do not pick up any stuff we have just built -->
-    <delete includeemptydirs="true" failonerror="false">
-      <fileset dir="../repository/org/apache/cxf" includes="**/*-ibm*">
-        <include name="**/*-ibm*" />
-        <include name="**/maven-metadata-local.xml" />
-      </fileset>
-    </delete>
   </target>
-
+  
   <target name="copySource">
     <fileset id="shipped.jars" dir="target/lib" includes="**/*.jar" />
     <fileset id="all.source.files" dir="." includes="**/src/main/java/**/*.java" />
@@ -120,7 +129,7 @@
       println "Copying folders: $sourceFoldersToCopy"
       
       sourceFoldersToCopy.each { f->
-        ant.copy(todir:"../apache.aries.code.scan/src") {
+        ant.copy(todir:"../mirror.maker.code.scan/src") {
           ant.fileset(dir:f, includes:"**/*")
         }
       }
@@ -129,19 +138,15 @@
     </groovy>
   </target>
 
-  <property name="maven.home" value="../apache.aries.prereqs/maven/apache-maven-3.0.4"/>
+  <property name="maven.home" value="../mirror.maker.prereqs/maven/apache-maven-3.0.4"/>
 
   <taskdef name="groovy"
     classname="org.codehaus.groovy.ant.Groovy">
     <classpath>
-      <pathelement path="${basedir}/../apache.aries.prereqs/groovy/lib/groovy-all.jar" />
+      <pathelement path="${basedir}/../mirror.maker.prereqs/groovy/lib/groovy-all.jar" />
     </classpath>
   </taskdef>
 
-  <!-- set the default values for these properties -->
-  <property name="version.search" value="-SNAPSHOT" />
-  <property name="version.replace.prefix" value="-ibm" />
-	
   <!-- We won't to update the maven artifact version of everything we build -->
   <target name="updateVersion">
     <fileset id="pom.files" dir="." includes="**/pom.xml" excludes="maven-plugins/archetypes/cxf-jaxws-javafirst/src/main/resources/archetype-resources/pom.xml"/>
@@ -177,7 +182,7 @@
         }
       
         // Note that we update it.version[0] because it.version is a node list rather a single node, but we know there is only ever one
-        nodes.each { it.version[0] = it.version[0].text().replaceAll(properties['version.search'], properties['version.replace.prefix']+'-'+properties['buildLabel']) }   
+        nodes.each { it.version[0] = it.version[0].text().replaceAll(properties['version.search'], properties['version.replace.string']) }   
       
         // handle properties version specifically, these are used in samples as a way to global
         // set which version of the projects the samples are built against (probably not applicable to CXF)
@@ -186,7 +191,7 @@
         }
       
         nodes.each { 
-          pom.properties."${it.name()}"[0] = it.text().replaceAll(properties['version.search'], properties['version.replace.prefix']+'-'+properties['buildLabel']) 
+          pom.properties."${it.name()}"[0] = it.text().replaceAll(properties['version.search'], properties['version.replace.string']) 
         }
       
         // write the result back to the file
@@ -209,56 +214,23 @@
       </fileset>
     </delete>
 
-    <mvn:mvn mavenHome="${maven.home}/" fork="true" 
-           resultproperty="maven.parent.return.code">
-      <arg value="-fae"/>
-      <arg value="-e"/>
-      <arg value="clean"/>
-      <arg value="install" />
-      <jvmarg value="-Xmx1024m"/>
-      <sysproperty key="maven.online.mode" value="${maven.online.mode}" />
-      <sysproperty key="obrRepository" value="NONE" />
-      <sysproperty key="skipTests" value="true" />
-    </mvn:mvn>
-
     <define-if/>
 
+  	<property name="maven.profile" value="default" />
+  	
     <!--
       By default maven will not refresh snapshots. Probably due to the fact that 
       the timestamps of the newly checked out repository suggests every artifact is fresh.
       Occasionally, we really do need to refresh snapshots in that case set the *maven.update.snapshots*
       property.
     -->
-    <if>
-      <istrue value="${maven.update.snapshots}" />
-      <then>
-        <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
-          <arg value="-fae" />
-          <arg value="-e" />
-          <arg value="-U" />
-          <arg value="clean" />
-          <arg value="install" />
-          <jvmarg value="-Xmx1024m" />
-          <sysproperty key="maven.repo.local" value="${maven.repo}" />
-          <sysproperty key="maven.online.mode" value="${maven.online.mode}" />
-          <sysproperty key="obrRepository" value="NONE" />
-          <sysproperty key="skipTests" value="true" />
-        </mvn:mvn>
-      </then>
-      <else>
-        <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
-          <arg value="-fae" />
-          <arg value="-e" />
-          <arg value="clean" />
-          <arg value="install" />
-          <jvmarg value="-Xmx1024m" />
-          <sysproperty key="maven.repo.local" value="${maven.repo}" />
-          <sysproperty key="maven.online.mode" value="${maven.online.mode}" />
-          <sysproperty key="obrRepository" value="NONE" />
-          <sysproperty key="skipTests" value="true" />
-        </mvn:mvn>      
-      </else>
-    </if>
+    <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
+      <arg line="${maven.offline.flag} -fae -e -P${maven.profile} ${maven.update.snapshots.flag} ${maven.goals}" />
+      <jvmarg value="-Xmx1024m" />
+      <sysproperty key="maven.repo.local" value="${maven.repo}" />
+      <sysproperty key="obrRepository" value="NONE" />
+      <sysproperty key="skipTests" value="${skipTests}" />
+    </mvn:mvn>
 
     <condition property="maven.build.fail">
       <not>
@@ -269,6 +241,52 @@
     <!-- Upload test results before announcing our failure. -->
     <antcall target="uploadTestResults"/>
 
+  </target>
+	
+  <target name="runLocalBuild">
+
+  	 <mvn:mvn mavenHome="${maven.home}/" fork="true" resultproperty="maven.main.return.code">
+	 	<arg line="${maven.offline.flag} -fae -e -Pjaxws22 ${maven.goals}" />
+		<jvmarg value="-Xmx1024m" />
+		<sysproperty key="maven.repo.local" value="../repository" />
+		<sysproperty key="obrRepository" value="NONE" />
+		<sysproperty key="skipTests" value="true" />
+	 </mvn:mvn>      
+		    
+  </target>
+	
+  <target name="packageLocalBuild">
+	 <mkdir dir="target/lib"/>
+	 <!-- When we pulling a new bundle we update this to get it in the new zip -->
+
+	 <copy todir="target/lib" flatten="true">
+		<fileset dir=".">
+		   <include name="svn-base-revision.txt"/>	      
+		   <!-- the jars we ship -->
+		   <include name="**/target/cxf-api-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-bindings-soap-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-bindings-xml-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-core-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-databinding-jaxb-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-frontend-jaxws-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-frontend-simple-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-management-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-transports-http-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-ws-addr-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-ws-mex-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-ws-policy-${cxf.version.num}.jar"/>
+		   <include name="**/target/cxf-rt-ws-security-${cxf.version.num}.jar"/>
+		      	
+		   <type type="file"/>
+		</fileset>
+	 </copy>
+
+     <zip destfile="target/apache-cxf-ibm-2.6.2.zip">
+		 <fileset dir="target/lib">
+		    <include name="*.jar"/>
+		    <include name="svn-base-revision.txt"/>
+		 </fileset>
+	 </zip>
   </target>
 
   <target name="failIfFail" if="maven.build.fail">
@@ -312,7 +330,19 @@
         <include name="svn-base-revision.txt"/>
         
         <!-- the jars we ship -->
-        <include name="**/target/*${buildLabel}.jar"/>
+        <include name="**/target/cxf-api-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-bindings-soap-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-bindings-xml-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-core-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-databinding-jaxb-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-frontend-jaxws-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-frontend-simple-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-management-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-transports-http-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-ws-addr-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-ws-mex-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-ws-policy-${version.replace.string}.jar"/>
+      	<include name="**/target/cxf-rt-ws-security-${version.replace.string}.jar"/>
       	<type type="file"/>
       </fileset>
     </copy>

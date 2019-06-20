@@ -101,7 +101,7 @@ public class AttachmentSerializerTest extends Assert {
             assertEquals("application/xop+xml; charset=UTF-8; type=\"application/soap+xml\";", 
                          part.getHeader("Content-Type")[0]);
         } else {
-            assertEquals("text/xml; charset=UTF-8; type=\"application/soap+xml\";", 
+            assertEquals("application/soap+xml; charset=UTF-8; type=\"application/soap+xml\";", 
                          part.getHeader("Content-Type")[0]);
         }
         

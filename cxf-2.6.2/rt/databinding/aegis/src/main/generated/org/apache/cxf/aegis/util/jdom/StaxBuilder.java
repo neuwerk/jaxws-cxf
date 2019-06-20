@@ -184,12 +184,26 @@ public class StaxBuilder {
 
     public Document build(InputStream is) throws XMLStreamException {
         isReadingMidStream = false;
-        return buildInternal(StaxUtils.createXMLStreamReader(is));
+        XMLStreamReader reader = null;
+        try {
+            reader = StaxUtils.createXMLStreamReader(is);
+            Document doc = buildInternal(reader);
+			return doc;
+        } finally {
+            StaxUtils.close(reader);
+        }        
     }
 
     public Document build(Reader reader) throws XMLStreamException {
         isReadingMidStream = false;
-        return buildInternal(StaxUtils.createXMLStreamReader(reader));
+        XMLStreamReader streamReader = null;
+        try {
+            streamReader = StaxUtils.createXMLStreamReader(reader);
+            Document doc = buildInternal(streamReader);
+			return doc;
+        } finally {
+            StaxUtils.close(streamReader);
+        }        
     }
     
     private Document buildInternal(XMLStreamReader r) throws XMLStreamException {

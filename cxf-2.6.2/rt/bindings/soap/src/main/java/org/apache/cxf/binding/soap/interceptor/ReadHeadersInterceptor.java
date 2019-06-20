@@ -36,6 +36,7 @@ import org.w3c.dom.Node;
 //import org.w3c.dom.NodeList;
 
 import org.apache.cxf.Bus;
+import org.apache.cxf.annotations.SchemaValidation.SchemaValidationType;
 import org.apache.cxf.binding.soap.Soap11;
 import org.apache.cxf.binding.soap.Soap12;
 import org.apache.cxf.binding.soap.SoapFault;
@@ -50,8 +51,8 @@ import org.apache.cxf.databinding.DataBinding;
 import org.apache.cxf.headers.HeaderManager;
 import org.apache.cxf.headers.HeaderProcessor;
 import org.apache.cxf.helpers.DOMUtils;
+import org.apache.cxf.helpers.ServiceUtils;
 import org.apache.cxf.interceptor.Fault;
-import org.apache.cxf.message.MessageUtils;
 import org.apache.cxf.phase.Phase;
 import org.apache.cxf.staxutils.PartialXMLStreamReader;
 import org.apache.cxf.staxutils.StaxUtils;
@@ -59,6 +60,11 @@ import org.apache.cxf.staxutils.W3CDOMStreamWriter;
 
 
 public class ReadHeadersInterceptor extends AbstractSoapInterceptor {
+
+    public static final String ENVELOPE_EVENTS = "envelope.events";
+    public static final String BODY_EVENTS = "body.events";
+    public static final String ENVELOPE_PREFIX = "envelope.prefix";
+    public static final String BODY_PREFIX = "body.prefix";
     /**
      * 
      */
@@ -106,15 +112,21 @@ public class ReadHeadersInterceptor extends AbstractSoapInterceptor {
 
     public static SoapVersion readVersion(XMLStreamReader xmlReader, SoapMessage message) {
         String ns = xmlReader.getNamespaceURI();
+        String lcname = xmlReader.getLocalName();
         if (ns == null || "".equals(ns)) {
-            throw new SoapFault(new Message("NO_NAMESPACE", LOG, xmlReader.getLocalName()),
+            throw new SoapFault(new Message("NO_NAMESPACE", LOG, lcname),
                                 Soap11.getInstance().getVersionMismatch());
         }
-        
+
         SoapVersion soapVersion = SoapVersionFactory.getInstance().getSoapVersion(ns);
         if (soapVersion == null) {
-            throw new SoapFault(new Message("INVALID_VERSION", LOG, ns, xmlReader.getLocalName()),
-                                    Soap11.getInstance().getVersionMismatch());
+            throw new SoapFault(new Message("INVALID_VERSION", LOG, ns, lcname),
+                                Soap11.getInstance().getVersionMismatch());
+        }
+
+        if (!"Envelope".equals(lcname)) {
+            throw new SoapFault(new Message("INVALID_ENVELOPE", LOG, lcname),
+                                soapVersion.getSender());
         }
         message.setVersion(soapVersion);
         return soapVersion;
@@ -125,14 +137,26 @@ public class ReadHeadersInterceptor extends AbstractSoapInterceptor {
             LOG.fine("ReadHeadersInterceptor skipped in HTTP GET method");
             return;
         }
-        XMLStreamReader xmlReader = message.getContent(XMLStreamReader.class);
 
+        /*
+         * Reject OPTIONS, and any other noise that is not allowed in SOAP.
+         */
+        final String verb = (String) message.get(org.apache.cxf.message.Message.HTTP_REQUEST_METHOD);
+        if (verb != null && !"POST".equals(verb)) {
+            Fault formula405 = new Fault("HTTP verb was not GET or POST", LOG);
+            formula405.setStatusCode(405);
+            throw formula405;
+        }
+
+        XMLStreamReader xmlReader = message.getContent(XMLStreamReader.class);
+        boolean closeNeeded = false;
         if (xmlReader == null) {
             InputStream in = message.getContent(InputStream.class);
             if (in == null) {
                 throw new RuntimeException("Can't find input stream in message");
             }
             xmlReader = StaxUtils.createXMLStreamReader(in);
+            closeNeeded = true;
         }
 
         try {
@@ -142,10 +166,9 @@ public class ReadHeadersInterceptor extends AbstractSoapInterceptor {
                 SoapVersion soapVersion = readVersion(xmlReader, message);
                 if (soapVersion == Soap12.getInstance()
                     && version == Soap11.getInstance()) {
-                    throw new SoapFault(new Message("INVALID_11_VERSION", LOG, 
-                                                    Soap12.getInstance().getNamespace(),
-                                                    xmlReader.getLocalName()),
-                                        Soap11.getInstance().getVersionMismatch());                    
+                    message.setVersion(version);
+                    throw new SoapFault(new Message("INVALID_11_VERSION", LOG),
+                                        version.getVersionMismatch());                    
                 }
 
                 XMLStreamReader filteredReader = new PartialXMLStreamReader(xmlReader, message.getVersion()
@@ -176,6 +199,7 @@ public class ReadHeadersInterceptor extends AbstractSoapInterceptor {
                                                         header.getLocalPart());
                 for (Element elem : elemList) {
                     Element hel = DOMUtils.getFirstElement(elem);
+                    hel = (Element) DOMUtils.getDomElement(hel);
                     while (hel != null) {
                         // Need to add any attributes that are present on the parent element
                         // which otherwise would be lost.
@@ -232,14 +256,17 @@ public class ReadHeadersInterceptor extends AbstractSoapInterceptor {
                         hel = DOMUtils.getNextElement(hel);
                     }
                 }
-                if (MessageUtils.getContextualBoolean(message, 
-                                                      SoapMessage.SCHEMA_VALIDATION_ENABLED,
-                                                      false)) {
+
+                if (ServiceUtils.isSchemaValidationEnabled(SchemaValidationType.IN, message)) {
                     message.getInterceptorChain().add(new CheckClosingTagsInterceptor());
                 }
             }
         } catch (XMLStreamException e) {
             throw new SoapFault(new Message("XML_STREAM_EXC", LOG), e, message.getVersion().getSender());
+        } finally {
+            if (closeNeeded) {
+                StaxUtils.close(xmlReader);
+            }
         }
     }
 }

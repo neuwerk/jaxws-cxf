@@ -92,7 +92,7 @@ public class HTTPTransportActivator
         final Matcher matcher;
         final int order;
         
-        public PidInfo(Dictionary<String, String> p, Matcher m, int o) {
+        PidInfo(Dictionary<String, String> p, Matcher m, int o) {
             matcher = m;
             props = p;
             order = o;
@@ -159,13 +159,15 @@ public class HTTPTransportActivator
         if (pid == null) {
             return;
         }
+        deleted(pid);
+        
         String url = (String)properties.get("url");
         String name = (String)properties.get("name");
         Matcher matcher = url == null ? null : Pattern.compile(url).matcher("");
         String p = (String)properties.get("order");
         int order = 50; 
         if (p != null) {
-            order = Integer.valueOf(p);
+            order = Integer.parseInt(p);
         }
         
         PidInfo info = new PidInfo(properties, matcher, order);
@@ -525,6 +527,8 @@ public class HTTPTransportActivator
                     p.setAllowChunking(Boolean.parseBoolean(v.trim()));
                 } else if ("ChunkingThreshold".equals(k)) {
                     p.setChunkingThreshold(Integer.parseInt(v.trim()));
+                } else if ("ChunkLength".equals(k)) {
+                    p.setChunkLength(Integer.parseInt(v.trim()));
                 } else if ("Connection".equals(k)) {
                     p.setConnection(ConnectionType.valueOf(v));
                 } else if ("DecoupledEndpoint".equals(k)) {

@@ -34,6 +34,7 @@ import org.w3c.dom.Element;
 import org.apache.cxf.binding.soap.SoapMessage;
 import org.apache.cxf.common.logging.LogUtils;
 import org.apache.cxf.helpers.CastUtils;
+import org.apache.cxf.helpers.DOMUtils;
 import org.apache.cxf.interceptor.Fault;
 import org.apache.cxf.ws.policy.AssertionInfo;
 import org.apache.cxf.ws.policy.AssertionInfoMap;
@@ -116,8 +117,9 @@ public class AsymmetricBindingHandler extends AbstractBindingBuilder {
                     } else {
                         policyAsserted(initiatorToken);
                         
-                        if (includeToken(initiatorToken.getInclusion())) {
+                        if (includeToken(initiatorToken.getInclusion())) {                      
                             Element el = secToken.getToken();
+                            el = (Element)DOMUtils.getDomElement(el);
                             this.addEncryptedKeyElement(cloneElement(el));
                             attached = true;
                         } 
@@ -126,7 +128,9 @@ public class AsymmetricBindingHandler extends AbstractBindingBuilder {
                     AssertionWrapper assertionWrapper = addSamlToken((SamlToken)initiatorToken);
                     if (assertionWrapper != null) {
                         if (includeToken(initiatorToken.getInclusion())) {
-                            addSupportingElement(assertionWrapper.toDOM(saaj.getSOAPPart()));
+                            Element envelope = saaj.getSOAPPart().getEnvelope();
+                            envelope = (Element)DOMUtils.getDomElement(envelope);
+                            addSupportingElement(assertionWrapper.toDOM(envelope.getOwnerDocument()));
                             storeAssertionAsSecurityToken(assertionWrapper);
                         }
                         policyAsserted(initiatorToken);
@@ -229,6 +233,7 @@ public class AsymmetricBindingHandler extends AbstractBindingBuilder {
                     
                     if (includeToken(initiatorToken.getInclusion())) {
                         Element el = secToken.getToken();
+                        el = (Element)DOMUtils.getDomElement(el);
                         this.addEncryptedKeyElement(cloneElement(el));
                         attached = true;
                     } 
@@ -238,7 +243,9 @@ public class AsymmetricBindingHandler extends AbstractBindingBuilder {
                     AssertionWrapper assertionWrapper = addSamlToken((SamlToken)initiatorToken);
                     if (assertionWrapper != null) {
                         if (includeToken(initiatorToken.getInclusion())) {
-                            addSupportingElement(assertionWrapper.toDOM(saaj.getSOAPPart()));
+                            Element envelope = saaj.getSOAPPart().getEnvelope();
+                            envelope = (Element)DOMUtils.getDomElement(envelope);
+                            addSupportingElement(assertionWrapper.toDOM(envelope.getOwnerDocument()));
                             storeAssertionAsSecurityToken(assertionWrapper);
                         }
                         policyAsserted(initiatorToken);
@@ -309,7 +316,44 @@ public class AsymmetricBindingHandler extends AbstractBindingBuilder {
             }
             
             checkForSignatureProtection(encryptionToken, encrBase);
+            if (isRequestor()) { 
+                checkForEncryptedTokens(encryptionToken, encrBase); 
+            }
         }
+    }
+    
+    private void checkForEncryptedTokens(Token encryptionToken, WSSecBase encrBase) {
+        // Check for signature protection first - this is to cover 
+        // the case where we don't have signature protection specified
+        if (!abinding.isSignatureProtection()) {
+            List<WSEncryptionPart> secondEncrParts = new ArrayList<WSEncryptionPart>();
+           
+            secondEncrParts.addAll(encryptedTokensList);
+
+            if (encryptionToken.isDerivedKeys() && !secondEncrParts.isEmpty()
+                && encrBase instanceof WSSecDKEncrypt) {
+                try {
+                    Element secondRefList 
+                        = ((WSSecDKEncrypt)encrBase).encryptForExternalRef(null, secondEncrParts);
+                    ((WSSecDKEncrypt)encrBase).addExternalRefElement(secondRefList, secHeader);
+
+                } catch (WSSecurityException ex) {
+                    throw new Fault(ex);
+                }
+            } else if (!secondEncrParts.isEmpty() && encrBase instanceof WSSecEncrypt) {
+                try {
+                    // Encrypt, get hold of the ref list and add it
+                    Element secondRefList = saaj.getSOAPPart()
+                        .createElementNS(WSConstants.ENC_NS,
+                                         WSConstants.ENC_PREFIX + ":ReferenceList");
+                    this.insertBeforeBottomUp(secondRefList);
+                    ((WSSecEncrypt)encrBase).encryptForRef(secondRefList, secondEncrParts);
+                    
+                } catch (WSSecurityException ex) {
+                    throw new Fault(ex);
+                }
+            }
+        }        
     }
     
     

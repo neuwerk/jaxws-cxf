@@ -259,6 +259,30 @@ public final class IOUtils {
             //nothing - just discarding
         }
     }
+    
+    /**
+     * Consumes at least the given number of bytes from the input stream
+     * @param input
+     * @param atLeast
+     * @throws IOException
+     */
+    public static void consume(final InputStream input, 
+                               int atLeast) throws IOException {
+        final byte[] buffer = new byte[4096];
+        int n = atLeast > buffer.length ? buffer.length : atLeast;
+        n = input.read(buffer, 0, n);
+        while (-1 != n) {
+            if (n == 0) {
+                throw new IOException("0 bytes read in violation of InputStream.read(byte[])");
+            }
+            atLeast -= n;
+            if (atLeast <= 0) {
+                return;
+            }
+            n = atLeast > buffer.length ? buffer.length : atLeast;
+            n = input.read(buffer, 0, n);
+        }
+    } 
 
     public static byte[] readBytesFromStream(InputStream in) throws IOException {
         int i = in.available();

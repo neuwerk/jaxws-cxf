@@ -26,18 +26,26 @@ import java.util.List;
 
 import javax.activation.DataSource;
 import javax.xml.namespace.QName;
+import javax.xml.soap.Detail;
 import javax.xml.soap.MessageFactory;
 import javax.xml.soap.SOAPException;
+import javax.xml.soap.SOAPFault;
+import javax.xml.soap.SOAPHeader;
 import javax.xml.soap.SOAPMessage;
 import javax.xml.soap.SOAPPart;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
 import javax.xml.transform.Source;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.validation.Schema;
 
 import org.w3c.dom.DocumentFragment;
+import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 
+import org.apache.cxf.annotations.SchemaValidation.SchemaValidationType;
 import org.apache.cxf.attachment.AttachmentDeserializer;
+import org.apache.cxf.binding.soap.Soap12;
 import org.apache.cxf.binding.soap.SoapFault;
 import org.apache.cxf.binding.soap.SoapMessage;
 import org.apache.cxf.binding.soap.interceptor.AbstractSoapInterceptor;
@@ -45,7 +53,9 @@ import org.apache.cxf.binding.soap.saaj.SAAJOutInterceptor;
 import org.apache.cxf.binding.soap.saaj.SAAJOutInterceptor.SAAJOutEndingInterceptor;
 import org.apache.cxf.binding.soap.saaj.SAAJStreamWriter;
 import org.apache.cxf.binding.soap.saaj.SAAJUtils;
+import org.apache.cxf.helpers.DOMUtils;
 import org.apache.cxf.helpers.IOUtils;
+import org.apache.cxf.helpers.ServiceUtils;
 import org.apache.cxf.interceptor.AbstractOutDatabindingInterceptor;
 import org.apache.cxf.interceptor.Fault;
 import org.apache.cxf.interceptor.StaxOutInterceptor;
@@ -56,13 +66,16 @@ import org.apache.cxf.message.MessageImpl;
 import org.apache.cxf.message.MessageUtils;
 import org.apache.cxf.phase.AbstractPhaseInterceptor;
 import org.apache.cxf.phase.Phase;
+import org.apache.cxf.service.model.BindingFaultInfo;
 import org.apache.cxf.service.model.BindingMessageInfo;
 import org.apache.cxf.service.model.BindingOperationInfo;
-import org.apache.cxf.staxutils.OverlayW3CDOMStreamWriter;
 import org.apache.cxf.staxutils.StaxUtils;
 import org.apache.cxf.staxutils.W3CDOMStreamWriter;
+import org.apache.cxf.wsdl.EndpointReferenceUtils;
+
 
 public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message> {
+    
     MessageModeOutInterceptorInternal internal;
     SAAJOutInterceptor saajOut;
     Class<?> type;
@@ -80,6 +93,7 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
         this.bindingName = bname;
     }
     public void handleMessage(Message message) throws Fault {
+        //LOG.info("@TJJ MessageModeOutInterceptor.handleMessage(Message message) entry: " + message);
         BindingOperationInfo bop = message.getExchange().get(BindingOperationInfo.class);
         if (bop != null && !bindingName.equals(bop.getBinding().getName())) {
             return;
@@ -146,7 +160,7 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
                 message.setContent(XMLStreamWriter.class, writer);
             }
         }
-        
+        //LOG.info("@TJJ MessageModeOutInterceptor.handleMessage(Message message) exit: " + message);
     }
     
     
@@ -162,6 +176,22 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
                 message.put("write.attachments", Boolean.TRUE);
             }
             try {
+                if (message instanceof org.apache.cxf.binding.soap.SoapMessage) {
+                    org.apache.cxf.binding.soap.SoapMessage cxfSoapMessage = 
+                            (org.apache.cxf.binding.soap.SoapMessage)message;
+                    String cxfNamespace = cxfSoapMessage.getVersion().getNamespace();
+                    SOAPHeader soapHeader = soapMessage.getSOAPHeader();
+                    String namespace = soapHeader == null ? null : soapHeader.getNamespaceURI();
+                    if (namespace != null && cxfNamespace != null && !namespace.equals(cxfNamespace) 
+                           && Soap12.SOAP_NAMESPACE.equals(namespace)) {
+                        cxfSoapMessage.setVersion(Soap12.getInstance());
+                        cxfSoapMessage.put(Message.CONTENT_TYPE, cxfSoapMessage.getVersion().getContentType());
+                    }
+                }
+            } catch (SOAPException e) {
+                //ignore
+            }
+            try {          
                 Object enc = soapMessage.getProperty(SOAPMessage.CHARACTER_SET_ENCODING);
                 if (enc instanceof String) {
                     message.put(Message.ENCODING, enc);
@@ -182,6 +212,38 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
         message.getInterceptorChain().add(internal);
     }
     
+    private void validateFaultDetail(Element detail, Schema schema, BindingOperationInfo bop) throws Exception {
+        if (detail != null) {
+            Element el = DOMUtils.getFirstElement(detail);
+            while (el != null) {
+                QName qn = DOMUtils.getElementQName(el);
+                for (BindingFaultInfo bfi : bop.getFaults()) {
+                    if (bfi.getFaultInfo().getMessagePartByIndex(0).getConcreteName().equals(qn)) {
+                        //Found a fault with the correct QName, we can validate it
+                        schema.newValidator().validate(new DOMSource(el));
+                    }
+                }
+                el = DOMUtils.getNextElement(el);
+            }
+        }
+    }
+    private void validateFault(SoapMessage message, SOAPFault fault, BindingOperationInfo bop) {
+        if (ServiceUtils.isSchemaValidationEnabled(SchemaValidationType.OUT, message)) {
+            Schema schema = EndpointReferenceUtils.getSchema(message.getExchange().getService()
+                                                             .getServiceInfos().get(0),
+                                                         message.getExchange().getBus());
+            Detail d = fault.getDetail();
+            try {
+                validateFaultDetail(d, schema, bop);
+            } catch (Exception e) {
+                throw new SoapFault(e.getMessage(), e, message.getVersion().getReceiver());
+            }
+
+            //We validated what we can from a fault standpoint
+            message.put(Message.SCHEMA_VALIDATION_ENABLED, Boolean.FALSE);
+        }
+    }
+    
     private class MessageModeOutInterceptorInternal extends AbstractSoapInterceptor {
         MessageModeOutInterceptorInternal() {
             super(Phase.PRE_PROTOCOL);
@@ -192,7 +254,7 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
             MessageContentsList list = (MessageContentsList)message.getContent(List.class);
             Object o = list.remove(0);
             SOAPMessage soapMessage = null;
-            
+
             if (o instanceof SOAPMessage) {
                 soapMessage = (SOAPMessage)o;
                 if (soapMessage.countAttachments() > 0) {
@@ -207,61 +269,67 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
                         StaxUtils.copy((Source)o, new SAAJStreamWriter(part));
                     }
                 } catch (SOAPException e) {
-                    throw new SoapFault("Error creating SOAPMessage", e, 
+                    throw new SoapFault("Error creating SOAPMessage", e,
                                         message.getVersion().getSender());
                 } catch (XMLStreamException e) {
-                    throw new SoapFault("Error creating SOAPMessage", e, 
+                    throw new SoapFault("Error creating SOAPMessage", e,
                                         message.getVersion().getSender());
                 }
             }
-            message.setContent(SOAPMessage.class, soapMessage);
-            
-            if (!message.containsKey(SAAJOutInterceptor.ORIGINAL_XML_WRITER)) {
-                XMLStreamWriter origWriter = message.getContent(XMLStreamWriter.class);
-                message.put(SAAJOutInterceptor.ORIGINAL_XML_WRITER, origWriter);
-            }
-            W3CDOMStreamWriter writer = new OverlayW3CDOMStreamWriter(soapMessage.getSOAPPart());
-            // Replace stax writer with DomStreamWriter
-            message.setContent(XMLStreamWriter.class, writer);
-            message.setContent(SOAPMessage.class, soapMessage);
 
-            BindingOperationInfo bop = message.getExchange().get(BindingOperationInfo.class);
-
+            BindingOperationInfo bop = message.getExchange().getBindingOperationInfo();
             DocumentFragment frag = soapMessage.getSOAPPart().createDocumentFragment();
             try {
                 Node body = SAAJUtils.getBody(soapMessage);
                 Node nd = body.getFirstChild();
                 while (nd != null) {
+                    if (nd instanceof SOAPFault) {
+                        message.put(Message.RESPONSE_CODE, 500);
+                        validateFault(message, (SOAPFault)nd, bop);
+                    }
                     body.removeChild(nd);
+                    nd = DOMUtils.getDomElement(nd);
                     frag.appendChild(nd);
                     nd = SAAJUtils.getBody(soapMessage).getFirstChild();
                 }
-                
+
+                message.setContent(SOAPMessage.class, soapMessage);
+
+                if (!message.containsKey(SAAJOutInterceptor.ORIGINAL_XML_WRITER)) {
+                    XMLStreamWriter origWriter = message.getContent(XMLStreamWriter.class);
+                    message.put(SAAJOutInterceptor.ORIGINAL_XML_WRITER, origWriter);
+                }
+                W3CDOMStreamWriter writer = new SAAJStreamWriter(soapMessage.getSOAPPart());
+                // Replace stax writer with DomStreamWriter
+                message.setContent(XMLStreamWriter.class, writer);
+                message.setContent(SOAPMessage.class, soapMessage);
+
                 int index = 0;
 
                 boolean client = isRequestor(message);
-                BindingMessageInfo bmsg = null; 
+                BindingMessageInfo bmsg = null;
 
-                if (client) {
+                if (client && bop != null) {
                     bmsg = bop.getInput();
-                } else if (bop.getOutput() != null) {
-                    bmsg = bop.getOutput();  
+                } else if (bop != null && bop.getOutput() != null) {
+                    bmsg = bop.getOutput();
                 }
-                if (bmsg != null && bmsg.getMessageParts() != null 
+                if (bmsg != null && bmsg.getMessageParts() != null
                     && bmsg.getMessageParts().size() > 0) {
-                    index = bmsg.getMessageParts().get(0).getIndex(); 
+                    index = bmsg.getMessageParts().get(0).getIndex();
                 }
 
                 list.set(index, frag);
-                
-                
-                //No need to buffer this as we're already a DOM, 
+
+
+                //No need to buffer this as we're already a DOM,
                 //but only do so if someone hasn't actually configured this
                 Object buffer = message
                     .getContextualProperty(AbstractOutDatabindingInterceptor.OUT_BUFFERING);
                 if (buffer == null) {
                     message.put(AbstractOutDatabindingInterceptor.OUT_BUFFERING, Boolean.FALSE);
                 }
+
             } catch (Exception ex) {
                 throw new Fault(ex);
             }
@@ -269,9 +337,10 @@ public class MessageModeOutInterceptor extends AbstractPhaseInterceptor<Message>
                 bop = bop.getWrappedOperation();
                 message.getExchange().put(BindingOperationInfo.class, bop);
             }
-            
+
             // Add a final interceptor to write the message
             message.getInterceptorChain().add(SAAJOutEndingInterceptor.INSTANCE);
+
         }
     }
         

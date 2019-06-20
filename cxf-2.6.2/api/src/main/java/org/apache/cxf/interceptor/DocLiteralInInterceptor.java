@@ -51,6 +51,7 @@ import org.apache.ws.commons.schema.XmlSchemaElement;
 public class DocLiteralInInterceptor extends AbstractInDatabindingInterceptor {
     public static final String KEEP_PARAMETERS_WRAPPER = DocLiteralInInterceptor.class.getName() 
         + ".DocLiteralInInterceptor.keep-parameters-wrapper";
+    public static final String IGNORE_PARAMETER = "com.ibm.jaxws.cxf.IgnoreValidSoap";
 
     private static final Logger LOG = LogUtils.getL7dLogger(DocLiteralInInterceptor.class);
 
@@ -205,7 +206,7 @@ public class DocLiteralInInterceptor extends AbstractInDatabindingInterceptor {
                         // webservice provider does not need to ensure size
                         parameters.add(o);
                     } else {
-                        parameters.put(p, o);
+                        parameters = this.checkValidSoap(parameters, p, o);
                     }
                     
                     paramNum++;
@@ -224,9 +225,25 @@ public class DocLiteralInInterceptor extends AbstractInDatabindingInterceptor {
             throw f;
         }
     }
-    
+
+    private MessageContentsList checkValidSoap(MessageContentsList parameters, MessagePartInfo p, Object o) {
+        String temp = System.getProperty(IGNORE_PARAMETER);
+        boolean ignoreValidSoap = Boolean.parseBoolean(temp);
+        if (ignoreValidSoap && (p != null)) {
+            parameters.put(p, o);
+        } else if (!ignoreValidSoap) {
+            parameters.put(p, o);
+        }
+        return parameters;
+    }
+
     private void validatePart(MessagePartInfo p, QName elName, Message m) {
         if (p == null) {
+            String temp = System.getProperty(IGNORE_PARAMETER);
+            boolean ignoreValidSoap = Boolean.parseBoolean(temp);
+            if (ignoreValidSoap) {
+                return;
+            }
             throw new Fault(new org.apache.cxf.common.i18n.Message("NO_PART_FOUND", LOG, elName),
                             Fault.FAULT_CODE_CLIENT);
 

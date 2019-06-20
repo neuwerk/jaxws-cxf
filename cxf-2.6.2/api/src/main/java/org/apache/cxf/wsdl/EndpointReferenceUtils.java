@@ -47,7 +47,6 @@ import javax.xml.bind.JAXBElement;
 import javax.xml.bind.JAXBException;
 import javax.xml.bind.Marshaller;
 import javax.xml.namespace.QName;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamWriter;
 import javax.xml.transform.Source;
@@ -637,6 +636,7 @@ public final class EndpointReferenceUtils {
             Map<String, byte[]> schemaSourcesMap = new LinkedHashMap<String, byte[]>();
             Map<String, Source> schemaSourcesMap2 = new LinkedHashMap<String, Source>();
 
+            XMLStreamWriter writer = null;
             try {
                 for (SchemaInfo si : serviceInfo.getSchemas()) {
                     Element el = si.getElement();
@@ -653,7 +653,7 @@ public final class EndpointReferenceUtils {
                     DOMSource ds = new DOMSource(el, baseURI);   
                     schemaSourcesMap2.put(si.getSystemId() + ":" + si.getNamespaceURI(), ds);
                     LoadingByteArrayOutputStream out = new LoadingByteArrayOutputStream();
-                    XMLStreamWriter writer = StaxUtils.createXMLStreamWriter(out);
+                    writer = StaxUtils.createXMLStreamWriter(out);
                     StaxUtils.copy(el, writer);
                     writer.flush();
                     schemaSourcesMap.put(si.getSystemId() + ":" + si.getNamespaceURI(), out.toByteArray());
@@ -710,6 +710,7 @@ public final class EndpointReferenceUtils {
                         unsetReadonly(nd);
                     }
                 }
+                StaxUtils.close(writer);
             }
             serviceInfo.setProperty(Schema.class.getName(), schema);
         }
@@ -1054,9 +1055,7 @@ public final class EndpointReferenceUtils {
             return new DOMSource(writer.getDocument());
         } catch (JAXBException e) {
             //ignore
-        } catch (ParserConfigurationException e) {
-            //ignore
-        }
+        } 
         return null;
     }
     
