@@ -1,6 +1,6 @@
 
 # Ignore all mvn target directory and their contents at the root of each project
-*/target/**
+**/target/**
 
 # Ignore some jazz metadata
 .jazz5/
